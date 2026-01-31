@@ -212,6 +212,9 @@ class LineageMap:
             for name, source in scope.sources.items():
                 if isinstance(source, exp.Table):
                     child_table = self._parse_table(source)
+                    self.visitedScopes[source] = child_table
+                    self.tableNodeMap[child_table.name] = child_table
+
                 else:
                     child_table = self._parse_scope(source, name)
 
@@ -223,6 +226,9 @@ class LineageMap:
         return root
 
     def _parse_table(self, table: exp.Table)-> TableNode:
+        if table in self.visitedScopes:
+            return self.visitedScopes[table]
+
         name = table.name
         db = table.db
         catalog = table.catalog
@@ -231,7 +237,6 @@ class LineageMap:
             name = db + "." +  name
 
         return TableNode(name, scope=table, schema=db, db=catalog)
-
 
     def _connect_nodes(self, root: TableNode)-> None:
         for t_source, c_sources in root.table_column_mapping.items():
@@ -245,6 +250,18 @@ class LineageMap:
                     downstream.columns[c_source].add_upstream(col)
                 else:
                     logger.warning(f"Column {c_source} not found in downstream table {downstream.name}")
+
+    def _connect_table_column_mapping(self, root: TableNode, source_table_name: str):
+        if source_table_name not in root.sources:
+            logger.warning(f"Source {source_table_name} not found in the current table scope {root.name}")
+            return
+
+        source_table = root.sources[source_table_name]
+        for c_source, col in root.table_column_mapping[source_table_name]:
+            if c_source in source_table.columns:
+                source_table.columns[c_source].add_upstream(col)
+            else:
+                logger.warning(f"Column {c_source} not found in downstream table {source_table.name}")
 
     def _connect_direct_table(self, node: TableNode):
 
@@ -297,10 +314,16 @@ class LineageMap:
         old  = self.tableNodeMap[node.name]
 
         for upstream in old.upstream:
-            self.connect_node_column(upstream, node)
-            upstream.sources[old.name] = node
+            # self.connect_node_column(upstream, node)
+            # upstream.sources[old.name] = node
+            for source_name, table_node in upstream.sources.items():
+                if table_node == old:
+                    upstream.sources[source_name] = node
+                    self._connect_table_column_mapping(upstream, source_name)
         old.detach_table()
         self.tableNodeMap[old.name] = node
+        self.visitedScopes[old.scope] = node
+        self.visitedScopes[node.scope] = node
 
     def connect_node_column(self, current_node: TableNode, down_stream_node: TableNode):
         for col in current_node.columns.values():
