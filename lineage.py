@@ -643,6 +643,95 @@ class LineageMap:
         return dot
 
 
+    def to_json(self) -> Dict:
+        """
+        Export the lineage graph to a JSON-serializable dictionary format compatible with React Flow.
+        
+        :return: Dictionary containing 'nodes' and 'edges' lists.
+        """
+        nodes = []
+        edges = []
+        
+        # Helper to create a consistent ID
+        def get_node_id(name):
+            return name
+        
+        # Helper to create column ID
+        def get_col_id(table_name, col_name):
+            return f"{table_name}::{col_name}"
+
+        # Create nodes (Tables)
+        for table_name, table_node in self.table_node_map.items():
+            # Format columns for the frontend
+            columns = []
+            for col_name in table_node.columns:
+                columns.append({
+                    "id": get_col_id(table_name, col_name),
+                    "name": col_name,
+                    "type": "column"
+                })
+
+            nodes.append({
+                "id": get_node_id(table_name),
+                "type": "tableNode", # Custom node type we'll define in React Flow
+                "data": {
+                    "label": table_name,
+                    "columns": columns,
+                    "schema": table_node.schema
+                },
+                "position": {"x": 0, "y": 0} # Layout will be handled by the frontend (Dagre)
+            })
+
+        # Create edges (Lineage)
+        edge_set = set() # To avoid duplicates
+        
+        for table_name, table_node in self.table_node_map.items():
+            target_id = get_node_id(table_name)
+            
+            # Table-level edges
+            for source_name in table_node.sources:
+                source_id = get_node_id(source_name)
+                edge_key = f"{source_id}->{target_id}"
+                
+                if edge_key not in edge_set:
+                    edges.append({
+                        "id": edge_key,
+                        "source": source_id,
+                        "target": target_id,
+                        "animated": True,
+                        "style": { "stroke": "#b1b1b7" }
+                    })
+                    edge_set.add(edge_key)
+
+            # Column-level edges
+            for col_name, col_node in table_node.columns.items():
+                target_handle_id = get_col_id(table_name, col_name)
+                
+                for upstream in col_node.upstream:
+                    if upstream.table:
+                        source_table_name = upstream.table.name
+                        source_col_name = upstream.name
+                        
+                        source_id = get_node_id(source_table_name)
+                        source_handle_id = get_col_id(source_table_name, source_col_name)
+                        
+                        # Edge ID needs to be unique for column connection
+                        edge_key = f"{source_handle_id}->{target_handle_id}"
+                        
+                        if edge_key not in edge_set:
+                            edges.append({
+                                "id": edge_key,
+                                "source": source_id,
+                                "target": target_id,
+                                "sourceHandle": source_handle_id,
+                                "targetHandle": target_handle_id,
+                                "animated": True,
+                                "style": { "stroke": "#555555", "strokeWidth": 2 }
+                            })
+                            edge_set.add(edge_key)
+
+        return {"nodes": nodes, "edges": edges}
+
 
 if __name__ == "__main__":
     logging.basicConfig(

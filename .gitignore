@@ -2,3 +2,10 @@
 .venv
 .idea
 __pycache__/
+.env
+docs/ai/
+.agent/
+.DS_Store
+.ai-devkit.json
+frontend/node_modules
+AGENTS.md
