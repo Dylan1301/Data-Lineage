@@ -89,13 +89,15 @@ class ColumnNode(Node):
         name: str,
         table_identifier: Optional[str] = None,
         alias: Optional[str] = None,
-        column_sources: Optional[List[str]] = None
+        column_sources: Optional[List[str]] = None,
+        index: Optional[int] = None
     ):
         super().__init__(name)
         self.table: Optional['TableNode'] = None
         self.alias = alias
         self.column_sources = column_sources or []
         self.table_identifier = table_identifier
+        self.index = index
 
     def __str__(self) -> str:
         return f"Column({self.name})"
@@ -222,7 +224,8 @@ class LineageMap:
     def _parse_column(
         self,
         col: exp.Expression | exp.Column | exp.Alias,
-        table: TableNode
+        table: TableNode,
+        index: Optional[int] = None
     ) -> ColumnNode:
         """
         Parse a column expression into a ColumnNode
@@ -232,7 +235,7 @@ class LineageMap:
         :return: Parsed ColumnNode
         """
         if isinstance(col, exp.Column):
-            return ColumnNode(col.name, table_identifier=col.table, alias=col.alias)
+            return ColumnNode(col.name, table_identifier=col.table, alias=col.alias, index=index)
 
         # Handle alias expressions (e.g., "col1 + col2 AS result")
         alias = col.alias
@@ -241,7 +244,7 @@ class LineageMap:
             table_prefix = f"{c.table}." if c.table else ""
             column_sources.append(f"{table_prefix}{c.name}")
 
-        return ColumnNode(alias, column_sources=column_sources)
+        return ColumnNode(alias, column_sources=column_sources, index=index)
 
     def _parse_scope(
         self,
@@ -263,6 +266,8 @@ class LineageMap:
 
         root = TableNode(name, scope=scope)
 
+        logger.debug(f"Parsing scope {name} in _parse_scope: {scope}")
+
         self.visited_scopes[scope] = root
         self.table_node_map[name] = root
 
@@ -276,6 +281,10 @@ class LineageMap:
             # Connect column lineage
             self._connect_column_lineage(root)
 
+        if isinstance(scope.expression, exp.Union):
+            self._process_select_columns(scope, root)
+            self._parse_union(scope, root)
+
         return root
 
     def _process_select_columns(self, scope: Scope, table: TableNode) -> None:
@@ -285,8 +294,8 @@ class LineageMap:
         :param scope: The scope being processed
         :param table: The table node to add columns to
         """
-        for col in scope.expression.selects:
-            column = self._parse_column(col, table)
+        for index, col in enumerate(scope.expression.selects):
+            column = self._parse_column(col, table, index)
             table.add_column(column)
 
             # Build column mappings for lineage connections
@@ -314,6 +323,22 @@ class LineageMap:
 
             table.sources[source_name] = child_table
             table.add_downstream(child_table)
+
+    def _parse_union(self, scope: Scope, table: TableNode) -> None:
+        # If union scope been visited -> return the node directly
+
+        for union_scope in scope.union_scopes:
+            logger.debug(f"Found union scope: {union_scope}")
+            child = self._parse_scope(union_scope)
+
+            table.add_downstream(child)
+            logger.debug(f"Added union scope {child.name} to {table.name}")
+            table.sources[child.name] = child
+
+            # Connect column lineage between union scope and its children if the children is also union
+            self._connect_column_lineage_union(table, child)
+
+        return
 
     def _parse_table(self, table: exp.Table) -> TableNode:
         """
@@ -361,6 +386,20 @@ class LineageMap:
 
         return errors
 
+    def _connect_column_lineage_union(self, table: TableNode, current_node: TableNode):
+
+        # Check if the current node is a union scope | parent node is union scope anyway
+        # if not isinstance(current_node.scope.expression, exp.Union):
+        #     return
+
+        # Stupid brute force approach
+        # Since it is union -> all the child columns will result in parent column based on index.
+        for table_column in table.columns.values():
+            for child_column in current_node.columns.values():
+                if table_column.index == child_column.index:
+                    child_column.add_upstream(table_column)
+        return
+
     def _reconnect_column_lineage(self, table: TableNode, source_name: str) -> None:
         """
         Reconnect column lineage for a specific source after it's been extended
@@ -383,8 +422,6 @@ class LineageMap:
                 logger.warning(
                     f"Column '{source_col_name}' not found in table {source_table.name}"
                 )
-
-
 
     def _parse_create_table(self, create: exp.Create) -> Optional[TableNode]:
         """
