@@ -20,7 +20,11 @@
       - If possible also keep in the source/ where the file is coming from/ pointer to the original file
     
       - Parse scope -> scope as a single Select query  which will create scope/ parse scope of the smaller 
-   
+
+Frontend display:
+    - Lineage node map into something that can be display 
+
+
 - Function design
   - ParseScope -> Parse a scope/expression to Node -> If it is an
   
