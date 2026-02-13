@@ -24,24 +24,21 @@ app.add_middleware(
 
 logger = logging.getLogger("uvicorn")
 
+# Initalize LineageMap
+l = LineageMap()
 @app.post("/api/visualize", response_model=LineageResponse)
 async def visualize(request: LineageRequest):
     try:
         # Initialize LineageMap (assuming root dir as SQL dir for now)
         # In a real app, this might be configurable
-        sql_dir = Path(__file__).parent.parent
-        l = LineageMap(sql_directory=str(sql_dir))
-        
+        # sql_dir = Path(__file__).parent.parent
+
         # Parse the SQL
         l.parse_sql(request.sql)
         
-        # Auto-extend tables if possible (optional, but good for MVP)
-        l.auto_extend_missing_tables()
-        
         # Convert to JSON for React Flow
         graph_data = l.to_json()
-        
-        print(graph_data)
+
 
         return graph_data
         
@@ -49,6 +46,10 @@ async def visualize(request: LineageRequest):
         logger.error(f"Error parsing SQL: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/api/clear")
+async def clear():
+    l.clear()
+    return {"status": "ok"}
 @app.get("/health")
 async def health():
     return {"status": "ok"}

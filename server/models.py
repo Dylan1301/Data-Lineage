@@ -3,6 +3,7 @@ from typing import Optional, Dict, List, Any
 
 class LineageRequest(BaseModel):
     sql: str
+    additional_sql: Optional[str] = None
     current_graph: Optional[Dict[str, Any]] = None
 
 class NodeData(BaseModel):
@@ -20,6 +21,7 @@ class GraphEdge(BaseModel):
     id: str
     source: str
     target: str
+    edge_type: str
     animated: bool = False
     style: Optional[Dict[str, Any]] = None
     sourceHandle: Optional[str] = None
