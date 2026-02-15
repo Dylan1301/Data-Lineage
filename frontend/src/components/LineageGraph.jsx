@@ -120,94 +120,149 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
         setHighlightedEdges(new Set());
     }, []);
 
+    // 1. Layout Effect: Handles structural changes (nodes, edges, view options)
     useEffect(() => {
-        if (initialNodes && initialNodes.length > 0) {
-            let processedEdges = [];
-            const uniqueEdges = new Set();
-            const columnConnectedTables = new Set();
+        if (!initialNodes || initialNodes.length === 0) return;
 
-            // 1. Process Column Edges if enabled
-            if (viewOptions.showColumn) {
-                initialEdges.forEach(edge => {
-                    if (edge.edge_type === "column_edge") {
-                        // Track that these two tables are connected via a column edge
-                        // We need to find which tables these columns belong to.
-                        // Since edge.source and edge.target are Node IDs in React Flow (Table IDs here), we can use them directly.
-                        const tableConnectionKey = `${edge.source}-${edge.target}`;
-                        columnConnectedTables.add(tableConnectionKey);
+        let processedEdges = [];
+        const uniqueEdges = new Set();
+        const columnConnectedTables = new Set();
 
-                        const isHighlighted = highlightedEdges.has(edge.id);
-                        const isDimmed = highlightedEdges.size > 0 && !isHighlighted;
+        // Process Column Edges first to identify connections
+        if (viewOptions.showColumn) {
+            initialEdges.forEach(edge => {
+                if (edge.edge_type === "column_edge") {
+                    const tableConnectionKey = `${edge.source}-${edge.target}`;
+                    columnConnectedTables.add(tableConnectionKey);
 
+                    processedEdges.push({
+                        ...edge,
+                        markerEnd: { type: MarkerType.ArrowClosed },
+                        animated: true,
+                        style: { stroke: '#f97316', strokeWidth: 2, opacity: 1 }, // Default Orange
+                        zIndex: 10,
+                    });
+                }
+            });
+        }
+
+        // Process Table Edges
+        if (viewOptions.showTable) {
+            initialEdges.forEach(edge => {
+                if (edge.edge_type === "table_edge") {
+                    const key = `table-${edge.source}-${edge.target}`;
+                    const tableConnectionKey = `${edge.source}-${edge.target}`;
+
+                    // Skip table edge if column edge exists between same tables
+                    if (!uniqueEdges.has(key) && !columnConnectedTables.has(tableConnectionKey)) {
+                        uniqueEdges.add(key);
                         processedEdges.push({
                             ...edge,
+                            sourceHandle: 'table-source',
+                            targetHandle: 'table-target',
                             markerEnd: { type: MarkerType.ArrowClosed },
                             animated: true,
-                            style: {
-                                stroke: isHighlighted ? '#a855f7' : '#f97316', // Purple-500 if highlighted, else Orange-500
-                                strokeWidth: isHighlighted ? 3 : 2,
-                                opacity: isDimmed ? 0.2 : 1
-                            },
-                            zIndex: isHighlighted ? 20 : 10,
+                            style: { stroke: '#2563eb', strokeWidth: 2 }, // Blue-600
+                            zIndex: 5,
                         });
                     }
-                });
-            }
-
-            // 2. Process Table Edges if enabled
-            if (viewOptions.showTable) {
-                initialEdges.forEach(edge => {
-                    if (edge.edge_type === "table_edge") {
-                        const key = `table-${edge.source}-${edge.target}`;
-                        const tableConnectionKey = `${edge.source}-${edge.target}`;
-
-                        // Check if a column edge already connects these tables. If so, SKIP table edge.
-                        // Also check if we've already processed this table edge to avoid duplicates.
-                        if (!uniqueEdges.has(key) && !columnConnectedTables.has(tableConnectionKey)) {
-                            uniqueEdges.add(key);
-                            processedEdges.push({
-                                ...edge,
-                                // Enforce table handles for table edges
-                                sourceHandle: 'table-source',
-                                targetHandle: 'table-target',
-                                markerEnd: { type: MarkerType.ArrowClosed },
-                                animated: true,
-                                style: { stroke: '#2563eb', strokeWidth: 2 }, // Blue-600
-                                zIndex: 5, // Table edges below column edges
-                            });
-                        }
-                    }
-                });
-            }
-
-            const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-                initialNodes,
-                processedEdges
-            );
-
-            // Enhance nodes with highlighting data and handlers
-            const enhancedNodes = layoutedNodes.map(node => ({
-                ...node,
-                data: {
-                    ...node.data,
-                    highlightedColumns: highlightedColumns,
-                    isHighlighted: highlightedTables.has(node.id),
-                    isDimmed: highlightedTables.size > 0 && !highlightedTables.has(node.id),
-                    onColumnHover: onColumnHover,
-                    onColumnLeave: onColumnLeave
                 }
-            }));
-
-            setNodes(enhancedNodes);
-            setEdges(layoutedEdges);
-
-            // Only fit view on initial load, not on hover updates to avoid jumping
-            if (highlightedColumns.size === 0) {
-                // Delay fitView slightly to allow render
-                setTimeout(() => fitView({ padding: 0.2 }), 50);
-            }
+            });
         }
-    }, [initialNodes, initialEdges, viewOptions, setNodes, setEdges, fitView, onColumnHover, onColumnLeave, highlightedColumns, highlightedTables, highlightedEdges]);
+
+        // Calculate layout
+        const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+            initialNodes,
+            processedEdges
+        );
+
+        // Initial node setup (without highlighting)
+        const initializedNodes = layoutedNodes.map(node => ({
+            ...node,
+            data: {
+                ...node.data,
+                highlightedColumns: new Set(),
+                isHighlighted: false,
+                isDimmed: false,
+                onColumnHover: onColumnHover,
+                onColumnLeave: onColumnLeave
+            }
+        }));
+
+        setNodes(initializedNodes);
+        setEdges(layoutedEdges);
+
+        // Initial fit view
+        setTimeout(() => fitView({ padding: 0.2 }), 50);
+
+    }, [initialNodes, initialEdges, viewOptions, setNodes, setEdges, fitView, onColumnHover, onColumnLeave]);
+
+
+    // 2. Highlight Effect: Handles visual updates ONLY (no layout changes)
+    useEffect(() => {
+        // Update Nodes: preserve position, update data
+        setNodes((nds) =>
+            nds.map((node) => {
+                const isHighlighted = highlightedTables.has(node.id);
+                const isDimmed = highlightedTables.size > 0 && !isHighlighted;
+
+                // Only update if changed to avoid unnecessary re-renders
+                if (
+                    node.data.isHighlighted === isHighlighted &&
+                    node.data.isDimmed === isDimmed &&
+                    node.data.highlightedColumns === highlightedColumns
+                ) {
+                    return node;
+                }
+
+                return {
+                    ...node,
+                    data: {
+                        ...node.data,
+                        highlightedColumns: highlightedColumns,
+                        isHighlighted: isHighlighted,
+                        isDimmed: isDimmed,
+                    },
+                };
+            })
+        );
+
+        // Update Edges: update style and zIndex
+        setEdges((eds) =>
+            eds.map((edge) => {
+                const isHighlighted = highlightedEdges.has(edge.id);
+                const isDimmed = highlightedEdges.size > 0 && !isHighlighted;
+
+                let newStyle = { ...edge.style };
+                let newZIndex = edge.zIndex;
+
+                if (edge.type !== 'smoothstep') { // specific check if needed, or apply generally
+                    if (isHighlighted) {
+                        newStyle.stroke = '#a855f7'; // Purple-500
+                        newStyle.strokeWidth = 3;
+                        newStyle.opacity = 1;
+                        newZIndex = 20;
+                    } else if (isDimmed) {
+                        newStyle.opacity = 0.2;
+                        newStyle.strokeWidth = 2; // Reset width if needed
+                        newZIndex = 5;
+                    } else {
+                        // Reset to default
+                        newStyle.opacity = 1;
+                        newStyle.strokeWidth = 2;
+                        newStyle.stroke = edge.sourceHandle === 'table-source' ? '#2563eb' : '#f97316';
+                        newZIndex = edge.sourceHandle === 'table-source' ? 5 : 10;
+                    }
+                }
+
+                return {
+                    ...edge,
+                    style: newStyle,
+                    zIndex: newZIndex,
+                };
+            })
+        );
+    }, [highlightedColumns, highlightedTables, highlightedEdges, setNodes, setEdges]);
 
     const onConnect = useCallback(
         (params) => setEdges((eds) => addEdge({ ...params, markerEnd: { type: MarkerType.ArrowClosed } }, eds)),

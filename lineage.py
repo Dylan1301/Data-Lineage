@@ -548,6 +548,16 @@ class LineageMap:
                 f"Error reading table definition for '{table_name}': {e}"
             )
 
+    def clear_file(self, file_name: str):
+
+        if file_name not in self._file_node_map:
+            return
+
+        for node in self._file_node_map[file_name]:
+            node.detach()
+        pass
+
+
     def extend_table(
         self,
         table_name: Optional[str] = None,
