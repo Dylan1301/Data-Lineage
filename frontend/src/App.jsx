@@ -4,10 +4,33 @@ import LineageGraphModel from './models/LineageGraphModel'
 import './App.css'
 
 function App() {
-    const [sql, setSql] = useState(`SELECT o.order_id, c.name 
-FROM db.orders o 
-JOIN db.customers c ON o.customer_id = c.id
-WHERE o.amount > 100`)
+    const [sql, setSql] = useState(`
+SELECT
+    ranked_customers.customer_id,
+    ranked_customers.first_name,
+    ranked_customers.last_name,
+    ranked_customers.total_spent
+FROM (
+    SELECT
+        c.customer_id,
+        c.first_name,
+        c.last_name,
+        SUM(o.total_amount) AS total_spent
+    FROM customers c
+    INNER JOIN orders o
+        ON o.customer_id = c.customer_id
+    WHERE o.status = 'COMPLETED'
+    GROUP BY
+        c.customer_id,
+        c.first_name,
+        c.last_name
+) AS ranked_customers
+WHERE ranked_customers.total_spent > (
+    SELECT AVG(o2.total_amount)
+    FROM orders o2
+    WHERE o2.status = 'COMPLETED'
+)
+ORDER BY ranked_customers.total_spent DESC`)
 
     const [graphData, setGraphData] = useState({ nodes: [], edges: [] })
     const [loading, setLoading] = useState(false)
@@ -69,16 +92,6 @@ WHERE o.amount > 100`)
                 >
                     {loading ? 'Processing...' : 'Visualize Lineage'}
                 </button>
-
-                <div className="mt-6 flex-grow flex flex-col mb-4">
-                    <label className="text-sm font-semibold text-gray-600 mb-2">Extend Lineage (Additional SQL)</label>
-                    <textarea
-                        className="flex-grow w-full p-3 font-mono text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none bg-slate-50"
-                        value={additionalSql}
-                        onChange={(e) => setAdditionalSql(e.target.value)}
-                        placeholder="CREATE TABLE ... AS SELECT ..."
-                    />
-                </div>
 
                 <div className="mb-4">
                     <label className="text-sm font-semibold text-gray-600 mb-2 block">Lineage View Options</label>

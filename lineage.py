@@ -1,6 +1,9 @@
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from sqlglot.expressions import Boolean
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, build_scope
 from sqlglot import parse_one
@@ -137,7 +140,8 @@ class TableNode(Node):
         self,
         name: str,
         scope: Optional[Scope | exp.Expression] = None,
-        schema: Optional[str] = None
+        schema: Optional[str] = None,
+        file_name: Optional[str] = None
     ):
         super().__init__(name)
         self.columns: Dict[str, ColumnNode] = {}
@@ -145,7 +149,7 @@ class TableNode(Node):
         self.scope = scope
         self.sources: Dict[str, 'TableNode'] = {}
         self.col_mappings: Dict[str, List[List]] = {}
-        self.file_name = Optional[str]
+        self.file_name: Optional[str] = file_name
 
     def __str__(self) -> str:
         col_names = ", ".join(self.columns.keys())
@@ -180,7 +184,8 @@ class LineageMap:
         self.start_node: Optional[TableNode] = None
         self._temp_count = 0
         self._table_file_cache: Dict[str, Path] = {}
-        self._file_node_map: Dict[str, List[TableNode]] = {}
+        self._file_node_map: Dict[str, List[TableNode]] = defaultdict(list)
+        self._dialect = None
 
     def clear(self) -> None:
         """
@@ -201,7 +206,7 @@ class LineageMap:
         self.start_node = None
         self._temp_count = 0
 
-    def parse_sql(self, sql: str, name: str = None) -> None:
+    def parse_sql(self, sql: str, name: Optional[str] = None, file_name: Optional[str] = None) -> None:
         """
         Parse SQL query and build lineage graph
 
@@ -261,7 +266,8 @@ class LineageMap:
         self,
         scope: Scope | exp.Table,
         name: Optional[str] = None,
-        parent_name: Optional[str] = None
+        parent_name: Optional[str] = None,
+        file_name: Optional[str] = None
     ) -> TableNode:
         """
         Parse a scope (subquery/CTE) into a TableNode
@@ -279,12 +285,13 @@ class LineageMap:
         if parent_name:
             name = f"{parent_name}.{name}"
 
-        root = TableNode(name, scope=scope)
+        root = TableNode(name, scope=scope, file_name=file_name)
 
         logger.debug(f"Parsing scope {name} in _parse_scope: {scope}")
 
         self.visited_scopes[scope] = root
         self.table_node_map[name] = root
+        self._file_node_map[file_name].append(root)
 
         if isinstance(scope.expression, exp.Select):
             # Process SELECT columns
@@ -321,7 +328,12 @@ class LineageMap:
                         table.col_mappings[source_name] = []
                     table.col_mappings[source_name].append([c_source, column])
 
-    def _process_sources(self, scope: Scope, table: TableNode, parent_name: Optional = None) -> None:
+    def _process_sources(
+            self,
+            scope: Scope,
+            table: TableNode,
+            parent_name: Optional[str]=None,
+            file_name: Optional[str]=None) -> None:
         """
         Process FROM/JOIN source tables and subqueries
 
@@ -330,21 +342,21 @@ class LineageMap:
         """
         for source_name, source in scope.sources.items():
             if isinstance(source, exp.Table):
-                child_table = self._parse_table(source)
+                child_table = self._parse_table(source, file_name=file_name)
                 self.visited_scopes[source] = child_table
                 self.table_node_map[child_table.name] = child_table
             else:
-                child_table = self._parse_scope(source, source_name, parent_name)
+                child_table = self._parse_scope(source, source_name, parent_name, file_name=file_name)
 
             table.sources[source_name] = child_table
             table.add_downstream(child_table)
 
-    def _parse_union(self, scope: Scope, table: TableNode, parent_name: Optional=None) -> None:
+    def _parse_union(self, scope: Scope, table: TableNode, parent_name: Optional[str]=None, file_name:Optional[str] = None) -> None:
         # If union scope been visited -> return the node directly
 
         for union_scope in scope.union_scopes:
             logger.debug(f"Found union scope: {union_scope}")
-            child = self._parse_scope(union_scope, parent_name=parent_name)
+            child = self._parse_scope(union_scope, parent_name=parent_name, file_name=file_name)
 
             table.add_downstream(child)
             logger.debug(f"Added union scope {child.name} to {table.name}")
@@ -355,14 +367,15 @@ class LineageMap:
 
         return
 
-    def _parse_table(self, table: exp.Table) -> TableNode:
+    def _parse_table(self, table: exp.Table, file_name:Optional[str]=None, overwrite:bool=False) -> TableNode:
         """
         Parse a table reference into a TableNode (base table without columns)
 
         :param table: Table expression from sqlglot
         :return: TableNode representing the base table
         """
-        if table in self.visited_scopes:
+        if not overwrite and table in self.visited_scopes:
+            print(f"Table {table} already visited")
             return self.visited_scopes[table]
 
         name = table.name
@@ -371,7 +384,10 @@ class LineageMap:
         if db:
             name = f"{db}.{name}"
 
-        return TableNode(name, scope=table, schema=db)
+        if not overwrite and name in self.table_node_map:
+            return self.table_node_map[name]
+
+        return TableNode(name, scope=table, schema=db, file_name=file_name)
 
     def _connect_column_lineage(self, table: TableNode) -> List[str]:
         """
@@ -438,7 +454,7 @@ class LineageMap:
                     f"Column '{source_col_name}' not found in table {source_table.name}"
                 )
 
-    def _parse_create_table(self, create: exp.Create) -> Optional[TableNode]:
+    def _parse_create_table(self, create: exp.Create, file_name: Optional[str]=None) -> Optional[TableNode]:
         """
         Parse CREATE TABLE statement and extract column definitions
 
@@ -452,7 +468,8 @@ class LineageMap:
         if not table:
             return None
 
-        root = self._parse_table(table)
+        root = self._parse_table(table, file_name=file_name, overwrite=True)
+        print(root)
 
         if not create.find(exp.Select):
             for column in create.find_all(exp.ColumnDef):
@@ -461,10 +478,9 @@ class LineageMap:
 
             return root
 
-        new_root = self._parse_scope(build_scope(create), parent_name=root.name)
+        new_root = self._parse_scope(build_scope(create), parent_name=root.name, file_name=file_name)
         del self.table_node_map[new_root.name]
-
-        self.table_node_map[root.name] = new_root
+        # self.table_node_map[root.name] = new_root
         new_root.name = root.name
         new_root.schema = root.schema
 
@@ -561,8 +577,8 @@ class LineageMap:
                 f"Expected CREATE statement for table '{table_name}', got {type(create_ast)}"
             )
 
-        new_node = self._parse_create_table(create_ast)
-
+        new_node = self._parse_create_table(create_ast, file_name=file_name)
+        print(new_node)
         if not new_node:
             raise LineageException(f"Failed to parse table definition for '{table_name}'")
 
@@ -586,16 +602,21 @@ class LineageMap:
                     upstream_node.sources[source_name] = new_node
                     # Reconnect column lineage
                     self._reconnect_column_lineage(upstream_node, source_name)
+            upstream_node.add_downstream(new_node)
 
-        # Transfer downstream connections
-        new_node.downstream = old_node.downstream.copy()
-        for downstream_node in new_node.downstream:
-            if old_node in downstream_node.upstream:
-                downstream_node.upstream.remove(old_node)
-                downstream_node.upstream.append(new_node)
+        # Transfer downstream connections - often none
 
+        # new_node.downstream = old_node.downstream.copy()
+        # for downstream_node in new_node.downstream:
+        #     if old_node in downstream_node.upstream:
+        #         downstream_node.upstream.remove(old_node)
+        #         downstream_node.upstream.append(new_node)
+
+        for old_col in old_node.columns.values():
+            old_col.detach()
         # Clean up old node
         old_node.detach()
+
 
         # Update mappings
         self.table_node_map[table_name] = new_node
@@ -626,7 +647,7 @@ class LineageMap:
 
     def visualize(self, show_table_edges: bool = True, show_column_edges: bool = True):
         """
-        Generate a Graphviz visualization of the lineage
+        Generate a Graphviz visualization of the lineage - this is useful for debugging.
 
         :param show_table_edges: Show edges between tables
         :param show_column_edges: Show edges between columns
@@ -673,6 +694,14 @@ class LineageMap:
                             )
 
         return dot
+
+    def _auto_infer_source_columns(self):
+        """
+        Create temp columns for source node when needed (eg. Select cola from tablea)
+        This will assume that tablea got cola -> create it
+        :return:
+        """
+        pass
 
 
     def to_json(self) -> Dict:
@@ -723,13 +752,13 @@ class LineageMap:
             # Table-level edges
             for source in table_node.downstream:
                 source_id = get_node_id(source.name)
-                edge_key = f"{source_id}->{target_id}"
+                edge_key = f"{target_id}->{source_id}"
                 # print(edge_key)
                 if edge_key not in edge_set:
                     edges.append({
                         "id": edge_key,
-                        "source": source_id,
-                        "target": target_id,
+                        "source": target_id,
+                        "target": source_id,
                         "edge_type": "table_edge",
                         "animated": True,
                         "style": { "stroke": "#b1b1b7" }

@@ -6,4 +6,7 @@
   - Wrap method extend_table -> basically another create for table without select [x]: Integrate with the old parse_sql
 
 - 2026-02-13:
+  - Add new delete metjpd for delete from table
+  - New config class for configuration
+  - New reader class for reading from source
   - 
