@@ -9,7 +9,7 @@ import logging
 sys.path.append(str(Path(__file__).parent.parent))
 
 from lineage import LineageMap
-from server.models import LineageRequest, LineageResponse
+from server.models import LineageRequest, LineageResponse, ClearFileRequest
 
 app = FastAPI(title="SQL Lineage API")
 
@@ -34,7 +34,8 @@ async def visualize(request: LineageRequest):
         # sql_dir = Path(__file__).parent.parent
 
         # Parse the SQL
-        l.parse_sql(request.sql)
+        if request.sql:
+            l.parse_sql(request.sql, file_name=request.file_name)
         
         # Convert to JSON for React Flow
         graph_data = l.to_json()
@@ -45,6 +46,14 @@ async def visualize(request: LineageRequest):
     except Exception as e:
         logger.error(f"Error parsing SQL: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/clear-file")
+async def clear_file(request: ClearFileRequest):
+    print(request.file_name)
+    l.clear_file(request.file_name)
+    return {"status": "ok"}
+
+# @app.post("/api/visualize")
 
 @app.post("/api/clear")
 async def clear():

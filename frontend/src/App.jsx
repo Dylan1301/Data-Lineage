@@ -85,17 +85,25 @@ ORDER BY ranked_customers.total_spent DESC`
         }
     }
 
-    const handleVisualize = async () => {
+    const handleVisualize = async (sqlToParse) => {
         setLoading(true)
         setError(null)
         try {
-            // Send only the current active file's content
+            const payload = {};
+            // If sqlToParse is a string, include it in the request to be parsed.
+            // If it's not provided (undefined/null) or not a string (e.g. event object), 
+            // we don't send 'sql', so the backend just returns the current graph state.
+            if (typeof sqlToParse === 'string') {
+                payload.sql = sqlToParse;
+                payload.file_name = activeFile.name;
+            }
+
             const response = await fetch('/api/visualize', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ sql: activeFile.content }),
+                body: JSON.stringify(payload),
             })
 
             if (!response.ok) {
@@ -113,6 +121,31 @@ ORDER BY ranked_customers.total_spent DESC`
         }
     }
 
+    const handleClearFile = async () => {
+        if (!confirm("Are you sure you want to clear the current file?")) return;
+
+        setLoading(true);
+        try {
+            const response = await fetch('/api/clear-file', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ file_name: activeFile.name }),
+            });
+            if (!response.ok) throw new Error('Failed to clear file');
+            setGraphData({ nodes: [], edges: [] });
+
+            // Refresh graph without parsing new SQL
+            handleVisualize(null);
+        } catch (err) {
+            console.error(err);
+            setError("Failed to clear file");
+        } finally {
+            setLoading(false);
+        }
+    }
+
     return (
         <div className="flex h-screen w-screen overflow-hidden bg-gray-50">
             {/* Sidebar - SQL Input */}
@@ -127,8 +160,8 @@ ORDER BY ranked_customers.total_spent DESC`
                                 key={file.id}
                                 onClick={() => setActiveFileId(file.id)}
                                 className={`group flex items-center gap-2 px-3 py-1.5 rounded-t text-sm font-medium cursor-pointer transition-colors whitespace-nowrap border-t border-l border-r ${activeFileId === file.id
-                                        ? 'bg-blue-50 border-blue-200 text-blue-700 z-10'
-                                        : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                                    ? 'bg-blue-50 border-blue-200 text-blue-700 z-10'
+                                    : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
                                     }`}
                                 style={{ marginBottom: '-1px' }}
                             >
@@ -165,7 +198,7 @@ ORDER BY ranked_customers.total_spent DESC`
                 <div className="px-4 pb-4 space-y-3">
                     <div className="flex gap-2">
                         <button
-                            onClick={handleVisualize}
+                            onClick={() => handleVisualize(activeFile.content)}
                             disabled={loading}
                             className={`flex-1 py-2 px-4 rounded font-bold text-white transition-colors ${loading
                                 ? 'bg-blue-300 cursor-not-allowed'
@@ -182,6 +215,17 @@ ORDER BY ranked_customers.total_spent DESC`
                             title="Clear Visualization"
                         >
                             Clear
+                        </button>
+                    </div>
+
+                    <div className="flex gap-2">
+                        <button
+                            onClick={handleClearFile}
+                            disabled={loading || graphData.nodes.length === 0}
+                            className="flex-1 py-2 px-4 rounded font-bold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Clear File"
+                        >
+                            Clear File
                         </button>
                     </div>
 

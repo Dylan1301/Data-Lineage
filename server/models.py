@@ -2,9 +2,10 @@ from pydantic import BaseModel
 from typing import Optional, Dict, List, Any
 
 class LineageRequest(BaseModel):
-    sql: str
+    sql: Optional[str] = None
     additional_sql: Optional[str] = None
     current_graph: Optional[Dict[str, Any]] = None
+    file_name: Optional[str] = None
 
 class NodeData(BaseModel):
     label: str
@@ -30,3 +31,9 @@ class GraphEdge(BaseModel):
 class LineageResponse(BaseModel):
     nodes: List[GraphNode]
     edges: List[GraphEdge]
+
+
+class ClearFileRequest(BaseModel):
+    file_name: str
+
+

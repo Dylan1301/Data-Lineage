@@ -221,9 +221,9 @@ class LineageMap:
         self.original_scope = build_scope(ast)
 
         if isinstance(ast, exp.Create):
-            self.start_node = self.extend_table(sql=sql)
+            self.start_node = self.extend_table(sql=sql, file_name=file_name)
         elif isinstance(ast, exp.Select):
-            self.start_node = self._parse_scope(self.original_scope, parent_name=name)
+            self.start_node = self._parse_scope(self.original_scope, parent_name=name, file_name=file_name)
         else:
             raise LineageException(f"Unsupported query type: {type(ast)}")
 
@@ -286,8 +286,10 @@ class LineageMap:
             name = f"{parent_name}.{name}"
 
         root = TableNode(name, scope=scope, file_name=file_name)
+        if file_name:
+            self._file_node_map[file_name].append(root)
 
-        logger.debug(f"Parsing scope {name} in _parse_scope: {scope}")
+        logger.debug(f"Parsing scope {name} in _parse_scope: {scope} file_name: {file_name}")
 
         self.visited_scopes[scope] = root
         self.table_node_map[name] = root
@@ -298,14 +300,14 @@ class LineageMap:
             self._process_select_columns(scope, root)
 
             # Process source tables/subqueries
-            self._process_sources(scope, root, parent_name=parent_name)
+            self._process_sources(scope, root, parent_name=parent_name, file_name=file_name)
 
             # Connect column lineage
             self._connect_column_lineage(root)
 
         if isinstance(scope.expression, exp.Union):
             self._process_select_columns(scope, root)
-            self._parse_union(scope, root, parent_name=parent_name)
+            self._parse_union(scope, root, parent_name=parent_name, file_name=file_name)
 
         return root
 
@@ -469,9 +471,10 @@ class LineageMap:
             return None
 
         root = self._parse_table(table, file_name=file_name, overwrite=True)
-        print(root)
 
         if not create.find(exp.Select):
+            if file_name:
+                self._file_node_map[file_name].append(root)
             for column in create.find_all(exp.ColumnDef):
                 col = ColumnNode(column.name, alias=column.alias)
                 root.add_column(col)
@@ -548,14 +551,49 @@ class LineageMap:
                 f"Error reading table definition for '{table_name}': {e}"
             )
 
-    def clear_file(self, file_name: str):
+    def delete_table_node(self, table_node: TableNode, columns_only:bool=False):
+        """
+        Delete a table node from the graph completely and delete all the references to it.
+        :param table_node:
+        :return:
+        """
+        if table_node.name in self.table_node_map:
+            self.table_node_map.pop(table_node.name)
 
+        if table_node.scope in self.visited_scopes:
+            self.visited_scopes.pop(table_node.scope)
+
+        if not columns_only:
+            table_node.detach()
+
+        for column in table_node.columns.values():
+            column.detach()
+
+        return
+
+    def clear_file(self, file_name: str):
+        """
+        Clear all the tables in a file
+
+        :param file_name:
+        :return:
+        """
         if file_name not in self._file_node_map:
             return
 
-        for node in self._file_node_map[file_name]:
-            node.detach()
-        pass
+        for table_node in self._file_node_map[file_name]:
+            if table_node.file_name == file_name:
+                print(f"Deleting table {table_node.name}")
+                print(type(table_node.scope))
+                if isinstance(table_node.scope, exp.Table):
+                    self.delete_table_node(table_node, columns_only=True)
+                else:
+                    self.delete_table_node(table_node, columns_only=False)
+
+
+        del self._file_node_map[file_name]
+
+        return
 
 
     def extend_table(
