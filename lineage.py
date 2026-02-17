@@ -1,5 +1,6 @@
 import sys
 from collections import defaultdict
+from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -13,6 +14,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+class TableNodeType(str, Enum):
+    table = "table"
+    query = "query"
 
 # Custom Exceptions
 class LineageException(Exception):
@@ -141,7 +146,8 @@ class TableNode(Node):
         name: str,
         scope: Optional[Scope | exp.Expression] = None,
         schema: Optional[str] = None,
-        file_name: Optional[str] = None
+        file_name: Optional[str] = None,
+        table_node_type: TableNodeType = TableNodeType.query
     ):
         super().__init__(name)
         self.columns: Dict[str, ColumnNode] = {}
@@ -150,6 +156,8 @@ class TableNode(Node):
         self.sources: Dict[str, 'TableNode'] = {}
         self.col_mappings: Dict[str, List[List]] = {}
         self.file_name: Optional[str] = file_name
+        self.is_first: bool = False
+        self.table_node_type: TableNodeType = table_node_type
 
     def __str__(self) -> str:
         col_names = ", ".join(self.columns.keys())
@@ -212,6 +220,7 @@ class LineageMap:
 
         :param sql: SQL query string to parse
         :param name: Optional name for the root table node - normally will be name of the file was parsed.
+        :param file_name: Optional file name to associate with the root table node.
         """
         # self.clear()
         if name is None:
@@ -226,6 +235,7 @@ class LineageMap:
             self.start_node = self._parse_scope(self.original_scope, parent_name=name, file_name=file_name)
         else:
             raise LineageException(f"Unsupported query type: {type(ast)}")
+        self.start_node.is_first = True
 
     def _generate_temp_name(self, prefix: str = "Temp") -> str:
         """
@@ -389,7 +399,7 @@ class LineageMap:
         if not overwrite and name in self.table_node_map:
             return self.table_node_map[name]
 
-        return TableNode(name, scope=table, schema=db, file_name=file_name)
+        return TableNode(name, scope=table, schema=db, file_name=file_name, table_node_type = TableNodeType.table)
 
     def _connect_column_lineage(self, table: TableNode) -> List[str]:
         """
@@ -486,6 +496,7 @@ class LineageMap:
         # self.table_node_map[root.name] = new_root
         new_root.name = root.name
         new_root.schema = root.schema
+        new_root.table_node_type = root.table_node_type
 
         return new_root
 
@@ -786,7 +797,10 @@ class LineageMap:
                 "data": {
                     "label": table_name,
                     "columns": columns,
-                    "schema": table_node.schema
+                    "schema": table_node.schema,
+                    "file_name": table_node.file_name,
+                    "table_node_type": table_node.table_node_type,
+                    "is_first": table_node.is_first
                 },
                 "position": {"x": 0, "y": 0} # Layout will be handled by the frontend (Dagre)
             })

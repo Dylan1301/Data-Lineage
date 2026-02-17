@@ -11,6 +11,9 @@ class NodeData(BaseModel):
     label: str
     columns: List[Dict[str, Any]]
     schema_name: Optional[str] = None
+    file_name: Optional[str] = None
+    table_node_type: Optional[str] = None
+    is_first: bool = False
 
 class GraphNode(BaseModel):
     id: str

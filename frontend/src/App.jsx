@@ -112,6 +112,7 @@ ORDER BY ranked_customers.total_spent DESC`
 
             const data = await response.json()
             const graphModel = LineageGraphModel.fromJSON(data)
+            console.log(graphModel)
             setGraphData(graphModel)
         } catch (err) {
             console.error(err)

@@ -79,7 +79,7 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
         while (queue.length > 0) {
             const currentId = queue.shift();
 
-            // Find edges connected to this column (upstream or downstream)
+            // Find edges connected to this column (downstream)
             allEdges.forEach(edge => {
                 if (edge.edge_type === 'column_edge') {
                     if (edge.sourceHandle === currentId && !visitedEdges.has(edge.id)) {
@@ -90,15 +90,6 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
                             // Find table for this column
                             const targetNode = initialNodes.find(n => n.data.columns.some(c => c.id === edge.targetHandle));
                             if (targetNode) visitedTables.add(targetNode.id);
-                        }
-                    } else if (edge.targetHandle === currentId && !visitedEdges.has(edge.id)) {
-                        visitedEdges.add(edge.id);
-                        if (!visitedCols.has(edge.sourceHandle)) {
-                            visitedCols.add(edge.sourceHandle);
-                            queue.push(edge.sourceHandle);
-                            // Find table for this column
-                            const sourceNode = initialNodes.find(n => n.data.columns.some(c => c.id === edge.sourceHandle));
-                            if (sourceNode) visitedTables.add(sourceNode.id);
                         }
                     }
                 }
