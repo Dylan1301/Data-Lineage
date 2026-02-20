@@ -4,8 +4,20 @@ import { Handle, Position } from '@xyflow/react';
 const TableNode = memo(({ data }) => {
     return (
         <div className={`table-node bg-white border border-gray-300 rounded shadow-sm min-w-[200px] transition-all duration-200 ${data.isHighlighted ? '!border-cyan-500 !ring-2 !ring-cyan-500' : ''} ${data.isDimmed ? 'opacity-40' : ''}`}>
-            <div className={`table-header bg-slate-100 p-2 border-b border-gray-200 font-bold text-sm rounded-t ${data.isHighlighted ? '!bg-cyan-50' : ''}`}>
-                {data.label}
+            <div className={`table-header bg-slate-100 p-2 border-b border-gray-200 font-bold text-sm rounded-t flex justify-between items-center ${data.isHighlighted ? '!bg-cyan-50' : ''}`}>
+                <span>{data.label}</span>
+                {data.is_first && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            data.onToggleMinimize && data.onToggleMinimize(data.id);
+                        }}
+                        className="ml-2 text-xs px-1.5 py-0.5 rounded bg-gray-200 hover:bg-gray-300 text-gray-600 transition-colors"
+                        title={data.isMinimized ? "Expand Lineage" : "Collapse Lineage"}
+                    >
+                        {data.isMinimized ? "[+]" : "[-]"}
+                    </button>
+                )}
             </div>
             <div className="table-columns p-2">
                 {data.columns.map((col) => {
@@ -40,9 +52,9 @@ const TableNode = memo(({ data }) => {
                     );
                 })}
             </div>
-            {/* Table level handles (optional, for table-to-table lineage if preferred) */}
-            <Handle type="target" position={Position.Left} id="table-target" style={{ top: 20 }} className="!w-3 !h-3 !bg-blue-500 !rounded-none" />
-            <Handle type="source" position={Position.Right} id="table-source" style={{ top: 20 }} className="!w-3 !h-3 !bg-blue-500 !rounded-none" />
+            {/* Table level handles for lineage */}
+            <Handle type="target" position={Position.Left} id="table-target" style={{ top: 16, background: 'transparent', border: 'none' }} />
+            <Handle type="source" position={Position.Right} id="table-source" style={{ top: 16, background: 'transparent', border: 'none' }} />
         </div>
     );
 });

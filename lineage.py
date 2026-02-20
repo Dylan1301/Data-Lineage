@@ -1,7 +1,9 @@
 import sys
+import time
 from collections import defaultdict
 from enum import Enum
 from pathlib import Path
+from time import sleep
 from typing import Dict, List, Optional, Tuple
 
 from sqlglot.expressions import Boolean
@@ -250,7 +252,7 @@ class LineageMap:
     def _parse_column(
         self,
         col: exp.Expression | exp.Column | exp.Alias,
-        table: TableNode,
+        table: TableNode | None = None,
         index: Optional[int] = None
     ) -> ColumnNode:
         """
@@ -262,7 +264,6 @@ class LineageMap:
         """
         if isinstance(col, exp.Column):
             return ColumnNode(col.name, table_identifier=col.table, alias=col.alias, index=index)
-
         # Handle alias expressions (e.g., "col1 + col2 AS result")
         alias = col.alias
         column_sources = []
@@ -308,7 +309,7 @@ class LineageMap:
         if isinstance(scope.expression, exp.Select):
             # Process SELECT columns
             self._process_select_columns(scope, root)
-
+            # sleep(1)
             # Process source tables/subqueries
             self._process_sources(scope, root, parent_name=parent_name, file_name=file_name)
 
@@ -387,7 +388,6 @@ class LineageMap:
         :return: TableNode representing the base table
         """
         if not overwrite and table in self.visited_scopes:
-            print(f"Table {table} already visited")
             return self.visited_scopes[table]
 
         name = table.name
@@ -412,7 +412,8 @@ class LineageMap:
 
         for source_name, col_mappings in table.col_mappings.items():
             if source_name not in table.sources:
-                error = f"Source table '{source_name}' not found in {table.name}"
+
+                error = f"func _connecT_column_lin Source table '{source_name}' not found in {table.name} at {time.time()}"
                 logger.warning(error)
                 errors.append(error)
                 continue
@@ -491,7 +492,8 @@ class LineageMap:
 
             return root
 
-        new_root = self._parse_scope(build_scope(create), parent_name=root.name, file_name=file_name)
+        new_root = self._parse_scope(build_scope(qualify(create)), parent_name=root.name, file_name=file_name)
+
         del self.table_node_map[new_root.name]
         # self.table_node_map[root.name] = new_root
         new_root.name = root.name
@@ -595,7 +597,6 @@ class LineageMap:
         for table_node in self._file_node_map[file_name]:
             if table_node.file_name == file_name:
                 print(f"Deleting table {table_node.name}")
-                print(type(table_node.scope))
                 if isinstance(table_node.scope, exp.Table):
                     self.delete_table_node(table_node, columns_only=True)
                 else:
@@ -637,7 +638,7 @@ class LineageMap:
             )
 
         new_node = self._parse_create_table(create_ast, file_name=file_name)
-        print(new_node)
+
         if not new_node:
             raise LineageException(f"Failed to parse table definition for '{table_name}'")
 
@@ -815,7 +816,6 @@ class LineageMap:
             for source in table_node.downstream:
                 source_id = get_node_id(source.name)
                 edge_key = f"{target_id}->{source_id}"
-                # print(edge_key)
                 if edge_key not in edge_set:
                     edges.append({
                         "id": edge_key,

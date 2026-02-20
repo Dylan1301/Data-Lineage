@@ -64,6 +64,19 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
     const [highlightedColumns, setHighlightedColumns] = React.useState(new Set());
     const [highlightedTables, setHighlightedTables] = React.useState(new Set());
     const [highlightedEdges, setHighlightedEdges] = React.useState(new Set());
+    const [minimizedSourceNodes, setMinimizedSourceNodes] = React.useState(new Set());
+
+    const onToggleMinimize = useCallback((nodeId) => {
+        setMinimizedSourceNodes((prev) => {
+            const next = new Set(prev);
+            if (next.has(nodeId)) {
+                next.delete(nodeId);
+            } else {
+                next.add(nodeId);
+            }
+            return next;
+        });
+    }, []);
 
     // Helper to find connected columns and edges
     const findConnectedLineage = useCallback((startColId, allEdges) => {
@@ -115,13 +128,86 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
     useEffect(() => {
         if (!initialNodes || initialNodes.length === 0) return;
 
+        // 1. Identify which nodes are visible based on minimize state
+        const visibleNodes = initialNodes.filter(node => {
+            if (node.data.table_node_type === 'table') return true;
+            if (node.data.is_first) return true;
+
+            // Check if this node should be hidden by a minimized node
+            for (const minId of minimizedSourceNodes) {
+                const minNode = initialNodes.find(n => n.id === minId);
+                if (minNode && minNode.data.file_name === node.data.file_name && minNode.id !== node.id) {
+                    return false; // Hide
+                }
+            }
+            return true;
+        });
+
+        const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
+
+        // 2. Perform transitive graph reduction on initial edges over hidden nodes
+        const reduceGraphEdges = (edgesToReduce) => {
+            const resultEdges = [];
+            const resultEdgeKeys = new Set();
+
+            const edgeMap = new Map(); // sourceHandle or source -> list of edges
+            edgesToReduce.forEach(e => {
+                const sourceKey = e.edge_type === 'column_edge' ? e.sourceHandle : e.source;
+                if (!edgeMap.has(sourceKey)) edgeMap.set(sourceKey, []);
+                edgeMap.get(sourceKey).push(e);
+            });
+
+            const findPaths = (startEdge, visited = new Set(), currentPath = []) => {
+                let paths = [];
+                const targetKey = startEdge.edge_type === 'column_edge' ? startEdge.targetHandle : startEdge.target;
+                const targetNodeId = startEdge.target;
+
+                const newPath = [...currentPath, startEdge.id];
+
+                if (visibleNodeIds.has(targetNodeId)) {
+                    paths.push({ targetEdge: startEdge, originalEdgeIds: newPath });
+                } else if (!visited.has(targetKey)) {
+                    const newVisited = new Set(visited).add(targetKey);
+                    const nextEdges = edgeMap.get(targetKey) || [];
+                    for (const nextEdge of nextEdges) {
+                        paths = paths.concat(findPaths(nextEdge, newVisited, newPath));
+                    }
+                }
+                return paths;
+            };
+
+            edgesToReduce.forEach(edge => {
+                if (visibleNodeIds.has(edge.source)) {
+                    const paths = findPaths(edge);
+                    paths.forEach(pathInfo => {
+                        const { targetEdge, originalEdgeIds } = pathInfo;
+                        const newEdgeKey = `${edge.sourceHandle || edge.source}-${targetEdge.targetHandle || targetEdge.target}`;
+                        if (!resultEdgeKeys.has(newEdgeKey)) {
+                            resultEdgeKeys.add(newEdgeKey);
+                            resultEdges.push({
+                                ...edge,
+                                id: `reduced-${edge.id}-${targetEdge.id}`,
+                                target: targetEdge.target,
+                                targetHandle: targetEdge.targetHandle,
+                                originalEdgeIds: originalEdgeIds
+                            });
+                        }
+                    });
+                }
+            });
+            return resultEdges;
+        };
+
+        const reducedEdges = reduceGraphEdges(initialEdges);
+
+        // 3. Process the reduced edges (Styling, uniqueness checks)
         let processedEdges = [];
         const uniqueEdges = new Set();
         const columnConnectedTables = new Set();
 
         // Process Column Edges first to identify connections
         if (viewOptions.showColumn) {
-            initialEdges.forEach(edge => {
+            reducedEdges.forEach(edge => {
                 if (edge.edge_type === "column_edge") {
                     const tableConnectionKey = `${edge.source}-${edge.target}`;
                     columnConnectedTables.add(tableConnectionKey);
@@ -139,7 +225,7 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
 
         // Process Table Edges
         if (viewOptions.showTable) {
-            initialEdges.forEach(edge => {
+            reducedEdges.forEach(edge => {
                 if (edge.edge_type === "table_edge") {
                     const key = `table-${edge.source}-${edge.target}`;
                     const tableConnectionKey = `${edge.source}-${edge.target}`;
@@ -161,10 +247,13 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
             });
         }
 
+        const finalEdges = processedEdges;
+
+
         // Calculate layout
         const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-            initialNodes,
-            processedEdges
+            visibleNodes,
+            finalEdges
         );
 
         // Initial node setup (without highlighting)
@@ -176,7 +265,10 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
                 isHighlighted: false,
                 isDimmed: false,
                 onColumnHover: onColumnHover,
-                onColumnLeave: onColumnLeave
+                onColumnLeave: onColumnLeave,
+                onToggleMinimize: onToggleMinimize,
+                isMinimized: minimizedSourceNodes.has(node.id),
+                id: node.id // Ensure ID is passed for the toggle handler
             }
         }));
 
@@ -186,7 +278,7 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
         // Initial fit view
         setTimeout(() => fitView({ padding: 0.2 }), 50);
 
-    }, [initialNodes, initialEdges, viewOptions, setNodes, setEdges, fitView, onColumnHover, onColumnLeave]);
+    }, [initialNodes, initialEdges, viewOptions, setNodes, setEdges, fitView, onColumnHover, onColumnLeave, minimizedSourceNodes]);
 
 
     // 2. Highlight Effect: Handles visual updates ONLY (no layout changes)
@@ -221,7 +313,9 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
         // Update Edges: update style and zIndex
         setEdges((eds) =>
             eds.map((edge) => {
-                const isHighlighted = highlightedEdges.has(edge.id);
+                const isHighlighted = edge.originalEdgeIds
+                    ? edge.originalEdgeIds.some(id => highlightedEdges.has(id))
+                    : highlightedEdges.has(edge.id);
                 const isDimmed = highlightedEdges.size > 0 && !isHighlighted;
 
                 let newStyle = { ...edge.style };
@@ -253,7 +347,7 @@ const LineageGraphContent = ({ initialNodes, initialEdges, viewOptions = { showT
                 };
             })
         );
-    }, [highlightedColumns, highlightedTables, highlightedEdges, setNodes, setEdges]);
+    }, [highlightedColumns, highlightedTables, highlightedEdges, setNodes, setEdges, minimizedSourceNodes]);
 
     const onConnect = useCallback(
         (params) => setEdges((eds) => addEdge({ ...params, markerEnd: { type: MarkerType.ArrowClosed } }, eds)),
