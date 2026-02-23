@@ -23,7 +23,11 @@ class TableModel {
         this.data = {
             label: data.label,
             columns: (data.columns || []).map(col => ColumnModel.fromJSON(col)),
-            schema: data.schema || null
+            schema: data.schema || null,
+            file_name: data.file_name || null,
+            table_node_type: data.table_node_type || 'query',
+            is_first: data.is_first || false,
+
         };
         this.position = position || { x: 0, y: 0 };
     }
