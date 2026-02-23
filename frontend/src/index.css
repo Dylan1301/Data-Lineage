@@ -6,3 +6,69 @@ html, body, #root {
   height: 100%;
   margin: 0;
 }
+
+/* ========== Dark mode overrides for ReactFlow ========== */
+.dark .react-flow__background {
+  background-color: #1a1b2e;
+}
+
+.dark .react-flow__controls button {
+  background-color: #374151;
+  border-color: #4b5563;
+  color: #d1d5db;
+  fill: #d1d5db;
+}
+.dark .react-flow__controls button:hover {
+  background-color: #4b5563;
+}
+
+.dark .react-flow__minimap {
+  background-color: #1f2937;
+}
+.dark .react-flow__minimap svg {
+  background-color: #1f2937;
+}
+.dark .react-flow__minimap-mask {
+  fill: rgba(255, 255, 255, 0.08);
+}
+.dark .react-flow__minimap-node {
+  fill: #4b5563;
+  stroke: #6b7280;
+}
+
+.dark .react-flow__attribution {
+  background: rgba(30, 30, 46, 0.7);
+}
+.dark .react-flow__attribution a {
+  color: #6b7280;
+}
+
+/* ========== CodeMirror height fix ========== */
+.cm-editor {
+  height: 100%;
+}
+
+/* ========== Custom toast styles ========== */
+.toast-success {
+  border-left: 4px solid #10b981;
+}
+.toast-error {
+  border-left: 4px solid #ef4444;
+}
+
+/* ========== Loading spinner ========== */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.dark .loading-spinner {
+  border-color: #374151;
+  border-top-color: #60a5fa;
+}
