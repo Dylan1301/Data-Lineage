@@ -84,10 +84,43 @@ export default function useLineageApi() {
         }
     }, []);
 
+    /**
+     * Submit multiple queries sequentially, then display the combined graph.
+     * @param {{ sql: string, fileName: string }[]} queries
+     */
+    const visualizeAll = useCallback(async (queries) => {
+        if (!queries || queries.length === 0) return;
+
+        setLoading(true);
+        try {
+            // Clear existing graph first
+            await lineageApi.clearGraph();
+
+            let data;
+            for (const q of queries) {
+                if (!q.sql?.trim()) continue;
+                data = await lineageApi.visualize({ sql: q.sql, fileName: q.fileName });
+            }
+
+            if (data) {
+                const graphModel = LineageGraphModel.fromJSON(data);
+                setGraphData(graphModel);
+            }
+
+            toast.success(`Loaded ${queries.length} demo queries`, { duration: 2000 });
+        } catch (err) {
+            console.error(err);
+            toast.error(err.message, { duration: 4000 });
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
     return {
         graphData,
         loading,
         visualize,
+        visualizeAll,
         clearGraph,
         clearFile,
     };

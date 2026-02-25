@@ -44,7 +44,7 @@ export async function visualize({ sql = null, fileName = null } = {}) {
         payload.sql = sql;
         payload.file_name = fileName;
     }
-    return request('/visualize', { body: payload });
+    return request('/lineage/visualize', { body: payload });
 }
 
 /**
@@ -52,7 +52,7 @@ export async function visualize({ sql = null, fileName = null } = {}) {
  * @returns {Promise<Object>} { status: "ok" }
  */
 export async function clearGraph() {
-    return request('/clear');
+    return request('/lineage/clear');
 }
 
 /**
@@ -62,5 +62,5 @@ export async function clearGraph() {
  * @returns {Promise<Object>} { status: "ok" }
  */
 export async function clearFile(fileName) {
-    return request('/clear-file', { body: { file_name: fileName } });
+    return request('/lineage/clear-file', { body: { file_name: fileName } });
 }

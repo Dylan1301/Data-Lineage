@@ -17,8 +17,8 @@ import './App.css'
 
 function App() {
     // ── Hooks ──────────────────────────────────────────
-    const { graphData, loading, visualize, clearGraph, clearFile } = useLineageApi();
-    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab } = useFileTabs();
+    const { graphData, loading, visualize, visualizeAll, clearGraph, clearFile } = useLineageApi();
+    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab, loadDemoQueries } = useFileTabs();
     const isDark = useThemeDetector();
 
     // ── Local UI state ────────────────────────────────
@@ -41,6 +41,13 @@ function App() {
         setSidebarWidth(width);
         localStorage.setItem('sidebarWidth', width.toString());
     }, []);
+
+    const handleRunAllDemos = useCallback(() => {
+        const queries = files
+            .filter(f => f.content?.trim())
+            .map(f => ({ sql: f.content, fileName: f.name }));
+        visualizeAll(queries);
+    }, [files, visualizeAll]);
 
     // ── Render ────────────────────────────────────────
     return (
@@ -122,6 +129,7 @@ function App() {
 
                 {/* Action Buttons */}
                 <div className="px-4 pb-4 space-y-3 flex-shrink-0">
+                    {/* Primary actions row */}
                     <div className="flex gap-2">
                         <button
                             onClick={() => visualize(activeFile.content, activeFile.name)}
@@ -155,7 +163,20 @@ function App() {
                         </button>
                     </div>
 
+                    {/* Demo + Clear File row */}
                     <div className="flex gap-2">
+                        <button
+                            onClick={handleRunAllDemos}
+                            disabled={loading}
+                            className={`flex-1 py-2 px-4 rounded-lg font-semibold text-sm transition-all duration-200 ${loading
+                                ? 'bg-emerald-200 dark:bg-emerald-900 text-emerald-400 cursor-not-allowed'
+                                : 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white shadow hover:shadow-md'
+                                }`}
+                            title="Send all open tabs to the backend at once"
+                        >
+                            ▶ Run All Tabs
+                        </button>
+
                         <button
                             onClick={() => clearFile(activeFile.name)}
                             disabled={loading || graphData.nodes.length === 0}
@@ -168,6 +189,23 @@ function App() {
                             title="Clear File"
                         >
                             Clear File
+                        </button>
+                    </div>
+
+                    {/* Reset demos row */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={loadDemoQueries}
+                            disabled={loading}
+                            className="flex-1 py-1.5 px-3 rounded-lg text-xs font-medium transition-colors
+                                       text-gray-500 dark:text-gray-400
+                                       border border-gray-200 dark:border-gray-700
+                                       bg-white dark:bg-gray-800
+                                       hover:bg-gray-100 dark:hover:bg-gray-700
+                                       disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Reset all tabs to demo queries"
+                        >
+                            ↻ Reset Demo Tabs
                         </button>
                     </div>
 
