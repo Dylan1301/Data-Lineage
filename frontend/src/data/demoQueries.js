@@ -158,6 +158,26 @@ LEFT JOIN (
 ) AS payments
     ON payments.user_id = u.user_id`,
     },
+    {
+        name: 'Sample Insert AS Select',
+        sql: `INSERT INTO sales_mart.sales (sale_id, sale_date, store_id, product_id, quantity, amount)
+SELECT
+    s.sale_id,
+    s.sale_date,
+    s.store_id,
+    s.product_id,
+    s.quantity,
+    s.amount
+FROM sales_staging.sales s
+WHERE s.sale_date >= '2025-01-01'`,
+    },
+    {
+        name: 'salesmart.sales',
+        sql: `CREATE TABLE sales_mart.sales AS
+        SELECT sale_id, sale_date, store_id, product_id, quantity, amount
+        FROM sales_staging.sales
+        WHERE sale_date >= '2025-01-01'`,
+    },
 ];
 
 export default DEMO_QUERIES;

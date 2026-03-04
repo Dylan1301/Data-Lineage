@@ -35,7 +35,7 @@ def to_react_flow(table_node_map: Dict[str, TableNode]) -> Dict:
                 "label": table_name,
                 "columns": columns,
                 "schema": table_node.schema,
-                "file_name": table_node.file_name,
+                "file_name": next(iter(table_node.file_names), None),
                 "table_node_type": table_node.table_node_type,
                 "is_first": table_node.is_first,
             },
@@ -135,8 +135,25 @@ def to_graphviz(table_node_map: Dict[str, TableNode], show_table_edges: bool = T
 
     return dot
 
-def to_pickle(table_node_map: Dict[str, TableNode]):
-    return pickle.dumps(table_node_map)
+def to_pickle(obj) -> bytes:
+    """
+    Serialise an object (typically a LineageMap or table_node_map) to bytes.
+
+    .. warning:: Pickle is not safe for untrusted data. Only use in trusted
+       environments where Redis is secured.
+    """
+    return pickle.dumps(obj)
+
 
 def from_pickle(data: bytes):
-    return pickle.loads(data)
+    """
+    Deserialise bytes produced by ``to_pickle``.
+
+    Returns ``None`` if the data is corrupted or incompatible, rather than
+    raising — the caller should create a fresh session in that case.
+    """
+    try:
+        return pickle.loads(data)
+    except (pickle.UnpicklingError, EOFError, AttributeError, ImportError) as e:
+        logger.warning("Failed to unpickle session data: %s", e)
+        return None

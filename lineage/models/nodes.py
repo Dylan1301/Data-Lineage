@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from enum import Enum
 from sqlglot.optimizer.scope import Scope
 from sqlglot import exp
@@ -6,6 +6,8 @@ from sqlglot import exp
 class TableNodeType(str, Enum):
     table = "table"
     query = "query"
+    insert = "insert"
+    merge = "merge"
 
 class Node:
     """
@@ -114,7 +116,7 @@ class TableNode(Node):
         schema: Schema/database name (if any)
         scope: The Scope or Expression this table represents
         sources: Dictionary mapping source table names to TableNode objects
-        col_mappings: Mapping of source table -> list of (source_column, target_column) pairs
+        col_mappings: Mapping of source table -> list of (source_column, target_column) pairs {table_name: [(source_col_name, table_col_node), ...]}
     """
     def __init__(
         self,
@@ -130,7 +132,7 @@ class TableNode(Node):
         self.scope = scope
         self.sources: Dict[str, 'TableNode'] = {}
         self.col_mappings: Dict[str, List[List]] = {}
-        self.file_name: Optional[str] = file_name
+        self.file_names: Set[str] = {file_name} if file_name else set()
         self.is_first: bool = False
         self.table_node_type: TableNodeType = table_node_type
 

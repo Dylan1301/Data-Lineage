@@ -8,6 +8,8 @@ Start with:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from server.redis import redis_lifespan
+from server.rate_limiter import RateLimitMiddleware
 from server.routes.lineage import router as lineage_router
 from server.routes.health import router as health_router
 
@@ -18,7 +20,8 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title="SQL Lineage API",
         description="Parse SQL and build column-level lineage graphs.",
-        version="0.1.0",
+        version="0.2.0",
+        lifespan=redis_lifespan,
     )
 
     # ── CORS ─────────────────────────────────────────────────────────────
@@ -29,6 +32,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ── Rate Limiting ────────────────────────────────────────────────────
+    application.add_middleware(RateLimitMiddleware)
 
     # ── Routers ──────────────────────────────────────────────────────────
     application.include_router(lineage_router)
