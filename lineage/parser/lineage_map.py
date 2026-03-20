@@ -50,6 +50,7 @@ class LineageMap:
         self.table_node_map.clear()
         self.visited_scopes.clear()
         self._table_file_cache.clear()
+        self._file_node_map.clear()
         self.original_scope = None
         self.start_node = None
         self._temp_count = 0
@@ -483,13 +484,10 @@ class LineageMap:
         # Pass 1: Delete all non-table nodes
         for node in non_table_nodes:
             logger.debug(f"Deleting non-table node {node.name}")
-            # self._cleanup_source_refs(node)
+            self._cleanup_source_refs(node)
             self.delete_table_node(node, columns_only=False)
 
         # Pass 2: Table nodes — remove file ref, delete only if fully orphaned
-        #   First discard all file refs, then determine which to delete.
-        #   A node is deletable if it has no file_names AND all its remaining
-        #   edges point to other deletable nodes (handles mutual references).
         for node in table_nodes:
             node.file_names.discard(file_name)
 
