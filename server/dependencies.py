@@ -43,6 +43,7 @@ async def load_session(
     :returns: (session_id, lineage_map)
     """
     session_id = get_session_id(request)
+    # print(f"Session ID: {session_id}")
 
     if session_id and redis_client:
         try:

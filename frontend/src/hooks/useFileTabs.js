@@ -56,6 +56,14 @@ export default function useFileTabs() {
     }, []);
 
     /**
+     * Rename a tab.
+     */
+    const renameTab = useCallback((id, newName) => {
+        if (!newName?.trim()) return;
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, name: newName.trim() } : f));
+    }, []);
+
+    /**
      * Reset all tabs to the demo queries.
      */
     const loadDemoQueries = useCallback(() => {
@@ -72,6 +80,7 @@ export default function useFileTabs() {
         addTab,
         closeTab,
         selectTab,
+        renameTab,
         loadDemoQueries,
     };
 }

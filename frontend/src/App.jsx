@@ -18,7 +18,7 @@ import './App.css'
 function App() {
     // ── Hooks ──────────────────────────────────────────
     const { graphData, loading, visualize, visualizeAll, clearGraph, clearFile } = useLineageApi();
-    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab, loadDemoQueries } = useFileTabs();
+    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab, renameTab, loadDemoQueries } = useFileTabs();
     const isDark = useThemeDetector();
 
     // ── Local UI state ────────────────────────────────
@@ -29,6 +29,10 @@ function App() {
         const saved = localStorage.getItem('sidebarWidth');
         return saved ? parseInt(saved, 10) : ResizeHandle.DEFAULT_WIDTH;
     });
+
+    // Tab renaming state
+    const [editingTabId, setEditingTabId] = useState(null);
+    const [editingTabName, setEditingTabName] = useState('');
 
     // ── Derived values ────────────────────────────────
     const fileNames = graphData.nodes
@@ -48,6 +52,28 @@ function App() {
             .map(f => ({ sql: f.content, fileName: f.name }));
         visualizeAll(queries);
     }, [files, visualizeAll]);
+
+    const handleTabDoubleClick = useCallback((file) => {
+        setEditingTabId(file.id);
+        setEditingTabName(file.name);
+    }, []);
+
+    const handleTabRenameSubmit = useCallback(() => {
+        if (editingTabId && editingTabName.trim()) {
+            renameTab(editingTabId, editingTabName);
+        }
+        setEditingTabId(null);
+        setEditingTabName('');
+    }, [editingTabId, editingTabName, renameTab]);
+
+    const handleTabRenameKeyDown = useCallback((e) => {
+        if (e.key === 'Enter') {
+            handleTabRenameSubmit();
+        } else if (e.key === 'Escape') {
+            setEditingTabId(null);
+            setEditingTabName('');
+        }
+    }, [handleTabRenameSubmit]);
 
     // ── Render ────────────────────────────────────────
     return (
@@ -91,13 +117,27 @@ function App() {
                             <div
                                 key={file.id}
                                 onClick={() => selectTab(file.id)}
+                                onDoubleClick={() => handleTabDoubleClick(file)}
                                 className={`group flex items-center gap-2 px-3 py-1.5 rounded-t text-xs font-medium cursor-pointer transition-colors whitespace-nowrap border-t border-l border-r ${activeFileId === file.id
                                     ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300 z-10'
                                     : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
                                     }`}
                                 style={{ marginBottom: '-1px' }}
                             >
-                                <span>{file.name}</span>
+                                {editingTabId === file.id ? (
+                                    <input
+                                        type="text"
+                                        value={editingTabName}
+                                        onChange={(e) => setEditingTabName(e.target.value)}
+                                        onBlur={handleTabRenameSubmit}
+                                        onKeyDown={handleTabRenameKeyDown}
+                                        autoFocus
+                                        className="w-20 px-1 py-0 text-xs bg-white dark:bg-gray-700 border border-blue-400 dark:border-blue-500 rounded outline-none text-gray-800 dark:text-gray-200"
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                ) : (
+                                    <span title="Double-click to rename">{file.name}</span>
+                                )}
                                 {files.length > 1 && (
                                     <button
                                         onClick={(e) => closeTab(file.id, e)}
