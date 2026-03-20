@@ -76,7 +76,7 @@ class LineageMap:
         if isinstance(ast, exp.Create):
             self.start_node = self.extend_table(sql=sql, file_name=file_name)
         elif isinstance(ast, exp.Select):
-            self.start_node = self._parse_scope(self.original_scope, parent_name=name, file_name=file_name)
+            self.start_node = self._parse_scope(self.original_scope, name=name, file_name=file_name)
         elif isinstance(ast, exp.Insert):
             self.start_node = self._parse_insert(ast, file_name=file_name)
         elif isinstance(ast, exp.Merge):
@@ -155,16 +155,17 @@ class LineageMap:
         if isinstance(scope.expression, exp.Select):
             # Process SELECT columns
             self._process_select_columns(scope, root)
-            
-            # Process source tables/subqueries
-            self._process_sources(scope, root, parent_name=parent_name, file_name=file_name)
+
+            # Process source tables/subqueries — use this scope's own name as the
+            # namespace so children are named <this_scope>.<child>, not <grandparent>.<child>
+            self._process_sources(scope, root, parent_name=name, file_name=file_name)
 
             # Connect column lineage
             self._connect_column_lineage(root)
 
         if isinstance(scope.expression, exp.Union):
             self._process_select_columns(scope, root)
-            self._parse_union(scope, root, parent_name=parent_name, file_name=file_name)
+            self._parse_union(scope, root, parent_name=name, file_name=file_name)
 
         return root
 
@@ -345,9 +346,7 @@ class LineageMap:
         root = self._parse_table(table, file_name=file_name, overwrite=True)
 
         if not create.find(exp.Select):
-            if file_name:
-                root.file_names.add(file_name)
-                self._file_node_map[file_name].append(root)
+            # _parse_table already registered the node in _file_node_map; don't add again
             for column in create.find_all(exp.ColumnDef):
                 col = ColumnNode(column.name, alias=column.alias)
                 root.add_column(col)
@@ -591,6 +590,13 @@ class LineageMap:
         for downstream_node in old_node.downstream:
             downstream_node.add_upstream(new_node)
 
+        # Remove old_node from _file_node_map so clear_file doesn't later mistake it
+        # for a live node and pop new_node out of table_node_map/visited_scopes
+        for fn in list(old_node.file_names):
+            file_list = self._file_node_map.get(fn, [])
+            if old_node in file_list:
+                file_list.remove(old_node)
+
         # Clean up old node
         for old_col in old_node.columns.values():
             old_col.detach()
@@ -659,11 +665,15 @@ class LineageMap:
         :param file_name: File to associate with the parsed statement
         :return: The target TableNode (marked as start_node)
         """
-        # 1. Get target table from exp.Schema
+        # 1. Get target table — Schema wraps table+columns when a column list is present,
+        #    otherwise sqlglot emits a bare Table node.
         schema = insert.find(exp.Schema)
-        target_table_exp = schema.this
-
-
+        if schema is not None:
+            target_table_exp = schema.this
+            target_columns = [col.name for col in schema.expressions] if schema.expressions else []
+        else:
+            target_table_exp = insert.find(exp.Table)
+            target_columns = []
 
         if not target_table_exp:
             raise LineageException("INSERT statement has no target table")
@@ -671,13 +681,6 @@ class LineageMap:
         target_table_node = self._parse_table(target_table_exp, file_name)
         self.table_node_map[target_table_node.name] = target_table_node
         self.visited_scopes[target_table_exp] = target_table_node
-
-        # Explicit target column list
-        target_columns = (
-            [col.name for col in schema.expressions]
-            if schema.expressions
-            else []
-        )
 
         # 2. Parse the SELECT subquery — reuses entire existing pipeline
         select_expr = insert.expression
@@ -707,15 +710,11 @@ class LineageMap:
                 select_col.add_upstream(target_col)
                 target_table_node.col_mappings[select_node.name].append((select_col.name, target_col))
         else:
-            # No support for this since it should be explicit.
             # No column list: positional mapping using SELECT column names
-            raise LineageException(
-                "INSERT INTO ... SELECT without column list is not supported"
-            )
-
-        for i, select_col in enumerate(select_columns):
-            target_col = self._ensure_column(target_table_node, select_col.name, index=i)
-            select_col.add_upstream(target_col)
+            for i, select_col in enumerate(select_columns):
+                target_col = self._ensure_column(target_table_node, select_col.name, index=i)
+                select_col.add_upstream(target_col)
+                target_table_node.col_mappings[select_node.name].append((select_col.name, target_col))
 
         target_table_node.add_downstream(select_node)
 
@@ -817,3 +816,5 @@ class LineageMap:
         :return:
         """
         pass
+
+
