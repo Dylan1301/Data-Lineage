@@ -13,10 +13,13 @@ import LineageGraphModel from '../models/LineageGraphModel';
  *
  * Returns an object with state + handler functions to be used by UI components.
  */
+const buildGraph = (data) => LineageGraphModel.fromJSON(data);
+
 export default function useLineageApi() {
     const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
     const [loading, setLoading] = useState(false);
     const [impactData, setImpactData] = useState(null);
+    const [error, setError] = useState(null);
 
     /**
      * Parse SQL and update the graph, or refresh the current graph if sql is null.
@@ -30,13 +33,13 @@ export default function useLineageApi() {
         setLoading(true);
         try {
             const data = await lineageApi.visualize({ sql, fileName, dialect });
-            const graphModel = LineageGraphModel.fromJSON(data);
-            setGraphData(graphModel);
+            setGraphData(buildGraph(data));
             if (typeof sql === 'string') {
                 toast.success('Lineage parsed successfully', { duration: 2000 });
             }
         } catch (err) {
             console.error(err);
+            setError(err.message);
             toast.error(err.message, { duration: 4000 });
         } finally {
             setLoading(false);
@@ -75,10 +78,10 @@ export default function useLineageApi() {
 
             // Refresh graph without parsing new SQL
             const data = await lineageApi.visualize();
-            const graphModel = LineageGraphModel.fromJSON(data);
-            setGraphData(graphModel);
+            setGraphData(buildGraph(data));
         } catch (err) {
             console.error(err);
+            setError('Failed to clear file');
             toast.error('Failed to clear file');
         } finally {
             setLoading(false);
@@ -104,13 +107,13 @@ export default function useLineageApi() {
             }
 
             if (data) {
-                const graphModel = LineageGraphModel.fromJSON(data);
-                setGraphData(graphModel);
+                setGraphData(buildGraph(data));
             }
 
             toast.success(`Loaded ${queries.length} demo queries`, { duration: 2000 });
         } catch (err) {
             console.error(err);
+            setError(err.message);
             toast.error(err.message, { duration: 4000 });
         } finally {
             setLoading(false);
@@ -133,6 +136,7 @@ export default function useLineageApi() {
     return {
         graphData,
         loading,
+        error,
         impactData,
         setImpactData,
         visualize,

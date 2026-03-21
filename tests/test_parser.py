@@ -197,6 +197,181 @@ def test_create_table_as_select():
     # CTAS inherits table_node_type=table from the CREATE TABLE parser
     assert summary.table_node_type == TableNodeType.table
 
+
+# ── INSERT then CREATE TABLE on the same target table ─────────────────────────
+#
+# Scenario: a file (or sequential parse calls) first populates a table via
+# INSERT ... SELECT, then (re-)defines the same table with CREATE TABLE AS SELECT.
+# Both statements share the same target: sales_mart.sales
+#
+# Two bugs are exposed:
+#
+# Bug 1 — Spurious table edge
+#   extend_table iterates old_node.downstream (= the INSERT scope) and calls
+#   insert_scope.add_upstream(create_node), which also appends insert_scope into
+#   create_node.downstream.  The CREATE TABLE node ends up listing the INSERT
+#   scope as one of its *sources*, which is wrong.
+#
+# Bug 2 — Column lineage severed
+#   extend_table calls old_col.detach() on every column of the old INSERT-target
+#   node. detach() removes old_col from insert_scope_col.upstream, breaking the
+#   INSERT column chain. extend_table never re-wires those edges to the new node's
+#   columns, so all INSERT column lineage silently disappears.
+
+INSERT_SQL = """
+    INSERT INTO sales_mart.sales (sale_id, sale_date, store_id, product_id, quantity, amount)
+    SELECT
+        s.sale_id,
+        s.sale_date,
+        s.store_id,
+        s.product_id,
+        s.quantity,
+        s.amount
+    FROM sales_staging.sales s
+    WHERE s.sale_date >= '2025-01-01'
+"""
+
+CREATE_SQL = """
+    CREATE TABLE sales_mart.sales AS
+    SELECT sale_id, sale_date, store_id, product_id, quantity, amount
+    FROM sales_staging.sales
+    WHERE sale_date >= '2025-01-01'
+"""
+
+
+def _build_insert_then_create(file_name="test") -> LineageMap:
+    """Parse INSERT followed by CREATE TABLE on the same target table."""
+    lm = LineageMap()
+    lm.parse_sql_file(INSERT_SQL + ";\n" + CREATE_SQL, file_name=file_name)
+    return lm
+
+
+def test_insert_then_create_nodes_exist():
+    """Both the target and staging table nodes must survive both statements."""
+    lm = _build_insert_then_create()
+
+    assert "sales_mart.sales" in lm.table_node_map, "target table missing from graph"
+    assert "sales_staging.sales" in lm.table_node_map, "staging table missing from graph"
+
+
+def test_insert_then_create_target_has_columns():
+    """The final sales_mart.sales node must carry all six columns from the CREATE."""
+    lm = _build_insert_then_create()
+
+    node = lm.table_node_map["sales_mart.sales"]
+    expected = {"sale_id", "sale_date", "store_id", "product_id", "quantity", "amount"}
+    assert expected == set(node.columns.keys()), (
+        f"Expected columns {expected}, got {set(node.columns.keys())}"
+    )
+
+
+def test_insert_then_create_correct_source():
+    """
+    BUG 1 (table-level) — the CREATE TABLE node's only source must be
+    sales_staging.sales.  Before the fix, the INSERT scope is also listed as a
+    source, which is wrong.
+    """
+    lm = _build_insert_then_create()
+
+    target = lm.table_node_map["sales_mart.sales"]
+    downstream_names = {n.name for n in target.downstream}
+
+    assert "sales_staging.sales" in downstream_names, (
+        "sales_staging.sales should be a source of the CREATE TABLE node"
+    )
+
+    # The INSERT scope must NOT appear as a source of the CREATE TABLE node.
+    insert_scopes = [n for n in target.downstream if "Insert" in n.name or "Scope" in n.name]
+    assert insert_scopes == [], (
+        f"Spurious source(s) attached to sales_mart.sales: {[n.name for n in insert_scopes]}"
+    )
+
+
+def _find_insert_scope(lm: LineageMap):
+    """Return the INSERT scope node (its name contains 'Insert')."""
+    return next(
+        (node for name, node in lm.table_node_map.items() if "Insert" in name),
+        None,
+    )
+
+
+def test_insert_then_create_insert_scope_still_in_graph():
+    """
+    The INSERT scope node must still exist in the graph after the CREATE replaces
+    the target — it represents a real data-flow step that should be preserved.
+    """
+    lm = _build_insert_then_create()
+
+    insert_scope = _find_insert_scope(lm)
+    assert insert_scope is not None, "INSERT scope node was removed from the graph"
+
+    # The INSERT scope's only table-level source must be sales_staging.sales
+    scope_source_names = {n.name for n in insert_scope.downstream}
+    assert "sales_staging.sales" in scope_source_names, (
+        "INSERT scope lost its link to sales_staging.sales"
+    )
+
+
+def test_insert_then_create_insert_scope_not_source_of_create():
+    """
+    BUG 1 (cross-check) — the INSERT scope must not appear in the sources dict
+    of the final sales_mart.sales node.
+    """
+    lm = _build_insert_then_create()
+
+    target = lm.table_node_map["sales_mart.sales"]
+    for source_name, source_node in target.sources.items():
+        assert "Insert" not in source_name and "Scope" not in source_name, (
+            f"INSERT scope '{source_name}' found in sales_mart.sales.sources — spurious edge"
+        )
+
+
+def test_insert_then_create_column_lineage_not_severed():
+    """
+    BUG 2 (column-level) — INSERT scope columns must retain their upstream wiring
+    after extend_table replaces the target node.
+
+    Before the fix, extend_table calls old_col.detach() which removes the edge
+    from insert_scope.sale_id.upstream, leaving every INSERT scope column with an
+    empty upstream list.  The correct behaviour is that each column retains at
+    least one upstream connection (to the corresponding column on sales_mart.sales).
+    """
+    lm = _build_insert_then_create()
+
+    insert_scope = _find_insert_scope(lm)
+    assert insert_scope is not None, "INSERT scope node not found"
+
+    severed = [
+        col_name
+        for col_name, col in insert_scope.columns.items()
+        if not col.upstream
+    ]
+    assert severed == [], (
+        f"Column lineage severed for INSERT scope columns: {severed}. "
+        "extend_table must re-wire old-target columns to new-target columns."
+    )
+
+
+def test_insert_then_create_column_lineage_points_to_new_target():
+    """
+    BUG 2 (column-level, stronger) — each INSERT scope column's upstream must
+    point to the *new* sales_mart.sales node (the CREATE TABLE), not a detached
+    old node.
+    """
+    lm = _build_insert_then_create()
+
+    target = lm.table_node_map["sales_mart.sales"]
+    insert_scope = _find_insert_scope(lm)
+    assert insert_scope is not None, "INSERT scope node not found"
+
+    for col_name, col in insert_scope.columns.items():
+        upstream_tables = {u.table for u in col.upstream if u.table}
+        assert target in upstream_tables, (
+            f"INSERT scope column '{col_name}' does not point to the new "
+            f"sales_mart.sales node. Upstream tables: "
+            f"{[t.name for t in upstream_tables]}"
+        )
+
     # Columns are populated from the SELECT projection
     assert "customer_id" in summary.columns
     assert "total" in summary.columns

@@ -1,35 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useTheme } from '../context/ThemeContext';
 
 const ThemeToggle = () => {
-    const [dark, setDark] = useState(() => {
-        if (typeof window !== 'undefined') {
-            return localStorage.getItem('theme') === 'dark' ||
-                (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        }
-        return false;
-    });
-
-    useEffect(() => {
-        const root = document.documentElement;
-        if (dark) {
-            root.classList.add('dark');
-            localStorage.setItem('theme', 'dark');
-        } else {
-            root.classList.remove('dark');
-            localStorage.setItem('theme', 'light');
-        }
-    }, [dark]);
+    const { isDark, setIsDark } = useTheme();
 
     return (
         <button
-            onClick={() => setDark(!dark)}
-            className="p-1.5 rounded-lg transition-colors duration-200 
+            onClick={() => setIsDark(!isDark)}
+            className="p-1.5 rounded-lg transition-colors duration-200
                        bg-gray-200 hover:bg-gray-300 text-gray-600
                        dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-yellow-400"
-            title={dark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             aria-label="Toggle theme"
         >
-            {dark ? (
+            {isDark ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="5" />
                     <line x1="12" y1="1" x2="12" y2="3" />

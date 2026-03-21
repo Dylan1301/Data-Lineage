@@ -12,51 +12,17 @@ import {
     MarkerType,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import dagre from 'dagre';
 import TableNode from './TableNode';
 import EdgeTooltip from './EdgeTooltip';
 import NodeContextMenu from './NodeContextMenu';
 import ExportButton from './ExportButton';
-import SearchBar from './SearchBar';
 import toast from 'react-hot-toast';
+import { getLayoutedElements } from '../utils/graphLayout';
+import { reduceGraphEdges } from '../utils/graphReduction';
+import useGraphHighlight from '../hooks/useGraphHighlight';
 
 const nodeTypes = {
     tableNode: TableNode,
-};
-
-const getLayoutedElements = (nodes, edges, direction = 'LR') => {
-    const dagreGraph = new dagre.graphlib.Graph();
-    dagreGraph.setDefaultEdgeLabel(() => ({}));
-
-    const nodeWidth = 220;
-
-    dagreGraph.setGraph({ rankdir: direction, ranksep: 80, nodesep: 40 });
-
-    nodes.forEach((node) => {
-        const height = 40 + (node.data.columns.length * 28);
-        dagreGraph.setNode(node.id, { width: nodeWidth, height: height });
-    });
-
-    edges.forEach((edge) => {
-        dagreGraph.setEdge(edge.source, edge.target);
-    });
-
-    dagre.layout(dagreGraph);
-
-    const layoutedNodes = nodes.map((node) => {
-        const nodeWithPosition = dagreGraph.node(node.id);
-        return {
-            ...node,
-            targetPosition: 'left',
-            sourcePosition: 'right',
-            position: {
-                x: nodeWithPosition.x - nodeWidth / 2,
-                y: nodeWithPosition.y - nodeWithPosition.height / 2,
-            },
-        };
-    });
-
-    return { nodes: layoutedNodes, edges };
 };
 
 const LineageGraphContent = ({
@@ -72,10 +38,8 @@ const LineageGraphContent = ({
     const { fitView, setCenter, getZoom } = useReactFlow();
     const graphRef = useRef(null);
 
-    const [highlightedColumns, setHighlightedColumns] = useState(new Set());
-    const [highlightedTables, setHighlightedTables] = useState(new Set());
-    const [highlightedEdges, setHighlightedEdges] = useState(new Set());
     const [minimizedSourceNodes, setMinimizedSourceNodes] = useState(new Set());
+    const { highlightedColumns, highlightedTables, highlightedEdges, onColumnHover, onColumnLeave } = useGraphHighlight(initialNodes, initialEdges);
 
     // Edge tooltip state
     const [edgeTooltip, setEdgeTooltip] = useState(null);
@@ -93,49 +57,6 @@ const LineageGraphContent = ({
             }
             return next;
         });
-    }, []);
-
-    // Helper to find connected columns and edges
-    const findConnectedLineage = useCallback((startColId, allEdges) => {
-        const visitedCols = new Set([startColId]);
-        const visitedTables = new Set();
-        const visitedEdges = new Set();
-        const queue = [startColId];
-
-        const startNode = initialNodes.find(n => n.data.columns.some(c => c.id === startColId));
-        if (startNode) visitedTables.add(startNode.id);
-
-        while (queue.length > 0) {
-            const currentId = queue.shift();
-
-            allEdges.forEach(edge => {
-                if (edge.edge_type === 'column_edge') {
-                    if (edge.sourceHandle === currentId && !visitedEdges.has(edge.id)) {
-                        visitedEdges.add(edge.id);
-                        if (!visitedCols.has(edge.targetHandle)) {
-                            visitedCols.add(edge.targetHandle);
-                            queue.push(edge.targetHandle);
-                            const targetNode = initialNodes.find(n => n.data.columns.some(c => c.id === edge.targetHandle));
-                            if (targetNode) visitedTables.add(targetNode.id);
-                        }
-                    }
-                }
-            });
-        }
-        return { visitedCols, visitedTables, visitedEdges };
-    }, [initialNodes]);
-
-    const onColumnHover = useCallback((colId) => {
-        const { visitedCols, visitedTables, visitedEdges } = findConnectedLineage(colId, initialEdges);
-        setHighlightedColumns(visitedCols);
-        setHighlightedTables(visitedTables);
-        setHighlightedEdges(visitedEdges);
-    }, [findConnectedLineage, initialEdges]);
-
-    const onColumnLeave = useCallback(() => {
-        setHighlightedColumns(new Set());
-        setHighlightedTables(new Set());
-        setHighlightedEdges(new Set());
     }, []);
 
     // Edge hover handlers
@@ -245,60 +166,7 @@ const LineageGraphContent = ({
 
         const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
 
-        // 2. Perform transitive graph reduction on initial edges over hidden nodes
-        const reduceGraphEdges = (edgesToReduce) => {
-            const resultEdges = [];
-            const resultEdgeKeys = new Set();
-
-            const edgeMap = new Map();
-            edgesToReduce.forEach(e => {
-                const sourceKey = e.edge_type === 'column_edge' ? e.sourceHandle : e.source;
-                if (!edgeMap.has(sourceKey)) edgeMap.set(sourceKey, []);
-                edgeMap.get(sourceKey).push(e);
-            });
-
-            const findPaths = (startEdge, visited = new Set(), currentPath = []) => {
-                let paths = [];
-                const targetKey = startEdge.edge_type === 'column_edge' ? startEdge.targetHandle : startEdge.target;
-                const targetNodeId = startEdge.target;
-
-                const newPath = [...currentPath, startEdge.id];
-
-                if (visibleNodeIds.has(targetNodeId)) {
-                    paths.push({ targetEdge: startEdge, originalEdgeIds: newPath });
-                } else if (!visited.has(targetKey)) {
-                    const newVisited = new Set(visited).add(targetKey);
-                    const nextEdges = edgeMap.get(targetKey) || [];
-                    for (const nextEdge of nextEdges) {
-                        paths = paths.concat(findPaths(nextEdge, newVisited, newPath));
-                    }
-                }
-                return paths;
-            };
-
-            edgesToReduce.forEach(edge => {
-                if (visibleNodeIds.has(edge.source)) {
-                    const paths = findPaths(edge);
-                    paths.forEach(pathInfo => {
-                        const { targetEdge, originalEdgeIds } = pathInfo;
-                        const newEdgeKey = `${edge.sourceHandle || edge.source}-${targetEdge.targetHandle || targetEdge.target}`;
-                        if (!resultEdgeKeys.has(newEdgeKey)) {
-                            resultEdgeKeys.add(newEdgeKey);
-                            resultEdges.push({
-                                ...edge,
-                                id: `reduced-${edge.id}-${targetEdge.id}`,
-                                target: targetEdge.target,
-                                targetHandle: targetEdge.targetHandle,
-                                originalEdgeIds: originalEdgeIds
-                            });
-                        }
-                    });
-                }
-            });
-            return resultEdges;
-        };
-
-        const reducedEdges = reduceGraphEdges(initialEdges);
+        const reducedEdges = reduceGraphEdges(initialEdges, visibleNodeIds);
 
         // 3. Process the reduced edges
         let processedEdges = [];
@@ -461,15 +329,6 @@ const LineageGraphContent = ({
         (params) => setEdges((eds) => addEdge({ ...params, markerEnd: { type: MarkerType.ArrowClosed } }, eds)),
         [setEdges],
     );
-
-    // Get unique file names from nodes
-    const fileNames = React.useMemo(() => {
-        const names = new Set();
-        initialNodes.forEach(n => {
-            if (n.data.file_name) names.add(n.data.file_name);
-        });
-        return Array.from(names);
-    }, [initialNodes]);
 
     return (
         <div ref={graphRef} style={{ width: '100%', height: '100%' }} className="relative">
