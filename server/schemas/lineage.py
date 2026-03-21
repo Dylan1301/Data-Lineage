@@ -6,14 +6,32 @@ from pydantic import BaseModel
 from typing import Optional, Dict, List, Any
 
 
+# ── Impact schemas ────────────────────────────────────────────────────────────
+
+class ImpactRequest(BaseModel):
+    """Request body for the /lineage/impact endpoint."""
+    table: str
+    column: str
+
+
+class ImpactEntry(BaseModel):
+    table: str
+    column: str
+
+
+class ImpactResponse(BaseModel):
+    column: str
+    upstream: List[ImpactEntry]
+    downstream: List[ImpactEntry]
+
+
 # ── Request Schemas ──────────────────────────────────────────────────────────
 
 class LineageRequest(BaseModel):
     """Request body for the /lineage/visualize endpoint."""
     sql: Optional[str] = None
-    additional_sql: Optional[str] = None
-    current_graph: Optional[Dict[str, Any]] = None
     file_name: Optional[str] = None
+    dialect: Optional[str] = None
 
 
 class ClearFileRequest(BaseModel):

@@ -64,6 +64,7 @@ const TableNode = memo(({ data }) => {
                                 ${isColSearchMatch ? '!bg-emerald-50 dark:!bg-emerald-900/20 !text-emerald-700 dark:!text-emerald-300 font-medium' : ''}`}
                             onMouseEnter={() => data.onColumnHover && data.onColumnHover(col.id)}
                             onMouseLeave={() => data.onColumnLeave && data.onColumnLeave()}
+                            onClick={(e) => { e.stopPropagation(); data.onColumnClick && data.onColumnClick(data.label, col.name); }}
                         >
                             {/* Left handle */}
                             <Handle

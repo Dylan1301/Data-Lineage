@@ -16,11 +16,12 @@ import LineageGraphModel from '../models/LineageGraphModel';
 export default function useLineageApi() {
     const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
     const [loading, setLoading] = useState(false);
+    const [impactData, setImpactData] = useState(null);
 
     /**
      * Parse SQL and update the graph, or refresh the current graph if sql is null.
      */
-    const visualize = useCallback(async (sql, fileName) => {
+    const visualize = useCallback(async (sql, fileName, dialect = null) => {
         if (typeof sql === 'string' && !sql.trim()) {
             toast.error('Please enter SQL before visualizing');
             return;
@@ -28,7 +29,7 @@ export default function useLineageApi() {
 
         setLoading(true);
         try {
-            const data = await lineageApi.visualize({ sql, fileName });
+            const data = await lineageApi.visualize({ sql, fileName, dialect });
             const graphModel = LineageGraphModel.fromJSON(data);
             setGraphData(graphModel);
             if (typeof sql === 'string') {
@@ -116,12 +117,28 @@ export default function useLineageApi() {
         }
     }, []);
 
+    /**
+     * Fetch column impact (upstream + downstream BFS).
+     */
+    const fetchImpact = useCallback(async (table, column) => {
+        try {
+            const data = await lineageApi.getImpact({ table, column });
+            setImpactData(data);
+        } catch (err) {
+            console.error(err);
+            toast.error(err.message, { duration: 3000 });
+        }
+    }, []);
+
     return {
         graphData,
         loading,
+        impactData,
+        setImpactData,
         visualize,
         visualizeAll,
         clearGraph,
         clearFile,
+        fetchImpact,
     };
 }

@@ -79,12 +79,13 @@ async function request(path, { method = 'POST', body = null } = {}) {
  * @param {string|null} params.fileName - The tab/file name to associate with this SQL
  * @returns {Promise<Object>} Raw graph JSON ({ nodes, edges })
  */
-export async function visualize({ sql = null, fileName = null } = {}) {
+export async function visualize({ sql = null, fileName = null, dialect = null } = {}) {
     const payload = {};
     if (typeof sql === 'string') {
         payload.sql = sql;
         payload.file_name = fileName;
     }
+    if (dialect) payload.dialect = dialect;
     return request('/lineage/visualize', { body: payload });
 }
 
@@ -104,4 +105,16 @@ export async function clearGraph() {
  */
 export async function clearFile(fileName) {
     return request('/lineage/clear-file', { body: { file_name: fileName } });
+}
+
+/**
+ * Return upstream and downstream impact for a given column.
+ *
+ * @param {Object} params
+ * @param {string} params.table - Table name
+ * @param {string} params.column - Column name
+ * @returns {Promise<Object>} { column, upstream: [{table, column}], downstream: [{table, column}] }
+ */
+export async function getImpact({ table, column }) {
+    return request('/lineage/impact', { body: { table, column } });
 }

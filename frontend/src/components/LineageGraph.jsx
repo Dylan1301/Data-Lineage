@@ -65,6 +65,7 @@ const LineageGraphContent = ({
     viewOptions = { showTable: true, showColumn: true },
     searchQuery = '',
     fileFilter = null,
+    onColumnClick = null,
 }) => {
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -362,6 +363,7 @@ const LineageGraphContent = ({
                 searchMatchColumns: new Set(),
                 onColumnHover: onColumnHover,
                 onColumnLeave: onColumnLeave,
+                onColumnClick: onColumnClick,
                 onToggleMinimize: onToggleMinimize,
                 isMinimized: minimizedSourceNodes.has(node.id),
                 id: node.id,
@@ -374,7 +376,7 @@ const LineageGraphContent = ({
         // Smooth fit view
         setTimeout(() => fitView({ padding: 0.2, duration: 500 }), 50);
 
-    }, [initialNodes, initialEdges, viewOptions, setNodes, setEdges, fitView, onColumnHover, onColumnLeave, minimizedSourceNodes, fileFilter]);
+    }, [initialNodes, initialEdges, viewOptions, setNodes, setEdges, fitView, onColumnHover, onColumnLeave, onColumnClick, minimizedSourceNodes, fileFilter]);
 
 
     // 2. Highlight Effect

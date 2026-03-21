@@ -33,7 +33,6 @@ class LineageMap:
         self._temp_count = 0
         self._table_file_cache: Dict[str, Path] = {}
         self._file_node_map: Dict[str, List[TableNode]] = defaultdict(list)
-        self._dialect = None
 
     def clear(self) -> None:
         """
@@ -55,19 +54,20 @@ class LineageMap:
         self.start_node = None
         self._temp_count = 0
 
-    def parse_sql(self, sql: str, name: Optional[str] = None, file_name: Optional[str] = None) -> None:
+    def parse_sql(self, sql: str, name: Optional[str] = None, file_name: Optional[str] = None, dialect: Optional[str] = None) -> None:
         """
         Parse SQL query and build lineage graph.
 
         :param sql: SQL query string to parse
         :param name: Optional name for the root table node — normally the file name.
         :param file_name: Optional file name to associate with the root table node.
+        :param dialect: Optional sqlglot dialect (e.g. "bigquery", "snowflake", "spark")
         """
         if name is None:
             name = self._generate_temp_name("Query")
 
         try:
-            ast = qualify(parse_one(sql))
+            ast = qualify(parse_one(sql, dialect=dialect), dialect=dialect)
         except Exception as e:
             raise LineageException(f"Failed to parse SQL: {e}") from e
 
@@ -84,6 +84,26 @@ class LineageMap:
         else:
             raise LineageException(f"Unsupported query type: {type(ast)}")
         self.start_node.is_first = True
+
+    def parse_sql_file(self, sql: str, file_name: Optional[str] = None, dialect: Optional[str] = None) -> None:
+        """
+        Parse all SQL statements in a string sequentially into the graph.
+
+        Uses sqlglot.parse() to split the input into individual statements,
+        then calls parse_sql() on each one. This is a drop-in replacement for
+        parse_sql() when the input may contain multiple statements.
+
+        :param sql: SQL string containing one or more statements
+        :param file_name: File to associate with all parsed statements
+        :param dialect: Optional sqlglot dialect (e.g. "bigquery", "snowflake", "spark")
+        :raises LineageException: If no valid statements are found
+        """
+        import sqlglot
+        statements = [s for s in sqlglot.parse(sql, dialect=dialect) if s is not None]
+        if not statements:
+            raise LineageException("No valid SQL statements found")
+        for stmt in statements:
+            self.parse_sql(stmt.sql(), file_name=file_name, dialect=dialect)
 
     def _generate_temp_name(self, prefix: str = "Temp") -> str:
         """
@@ -809,12 +829,41 @@ class LineageMap:
                     source_col = self._ensure_column(source, src_col_ref.name)
                     source_col.add_upstream(target_col)
 
-    def _auto_infer_source_columns(self):
+    def get_column_impact(self, table_name: str, col_name: str) -> dict:
         """
-        Create temp columns for source node when needed (eg. Select cola from tablea)
-        This will assume that tablea got cola -> create it
-        :return:
+        BFS upstream and downstream from a given column.
+
+        Returns all (table, column) pairs that feed into it and that it feeds into,
+        traversing the full column-level lineage graph in both directions.
+
+        :param table_name: Name of the table containing the column
+        :param col_name: Name of the column
+        :return: Dict with 'column', 'upstream', and 'downstream' lists
+        :raises LineageException: If the column is not found
         """
-        pass
+        table = self.table_node_map.get(table_name)
+        if not table or col_name not in table.columns:
+            raise LineageException(f"Column {table_name}.{col_name} not found")
 
+        start = table.columns[col_name]
 
+        def bfs(start_col, direction: str):
+            visited: set = set()
+            queue = [start_col]
+            result = []
+            while queue:
+                col = queue.pop(0)
+                neighbours = col.upstream if direction == "upstream" else col.downstream
+                for n in neighbours:
+                    key = (n.table.name if n.table else "?", n.name)
+                    if key not in visited:
+                        visited.add(key)
+                        result.append({"table": key[0], "column": key[1]})
+                        queue.append(n)
+            return result
+
+        return {
+            "column": f"{table_name}.{col_name}",
+            "upstream": bfs(start, "upstream"),
+            "downstream": bfs(start, "downstream"),
+        }

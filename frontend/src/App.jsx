@@ -1,13 +1,15 @@
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback } from 'react'
 import { Toaster } from 'react-hot-toast'
 
 // Hooks
 import useLineageApi from './hooks/useLineageApi'
 import useFileTabs from './hooks/useFileTabs'
 import useThemeDetector from './hooks/useThemeDetector'
+import useKeyboardShortcuts from './hooks/useKeyboardShortcuts'
 
 // Components
 import LineageGraph from './components/LineageGraph'
+import ImpactPanel from './components/ImpactPanel'
 import ThemeToggle from './components/ThemeToggle'
 import SqlEditor from './components/SqlEditor'
 import ResizeHandle from './components/ResizeHandle'
@@ -17,14 +19,15 @@ import './App.css'
 
 function App() {
     // ── Hooks ──────────────────────────────────────────
-    const { graphData, loading, visualize, visualizeAll, clearGraph, clearFile } = useLineageApi();
-    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab, renameTab, loadDemoQueries } = useFileTabs();
+    const { graphData, loading, impactData, setImpactData, visualize, visualizeAll, clearGraph, clearFile, fetchImpact } = useLineageApi();
+    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab, renameTab, loadDemoQueries, importFile } = useFileTabs();
     const isDark = useThemeDetector();
 
     // ── Local UI state ────────────────────────────────
     const [viewOptions, setViewOptions] = useState({ showTable: true, showColumn: true });
     const [searchQuery, setSearchQuery] = useState('');
     const [fileFilter, setFileFilter] = useState(null);
+    const [dialect, setDialect] = useState('');
     const [sidebarWidth, setSidebarWidth] = useState(() => {
         const saved = localStorage.getItem('sidebarWidth');
         return saved ? parseInt(saved, 10) : ResizeHandle.DEFAULT_WIDTH;
@@ -39,6 +42,14 @@ function App() {
         .map(n => n.data?.file_name)
         .filter(Boolean)
         .filter((v, i, a) => a.indexOf(v) === i);
+
+    const graphStats = React.useMemo(() => {
+        const tables = graphData.nodes.filter(n => n.data?.table_node_type === 'table').length;
+        const queries = graphData.nodes.filter(n => n.data?.table_node_type !== 'table').length;
+        const colEdges = graphData.edges.filter(e => e.edge_type === 'column_edge').length;
+        const files = new Set(graphData.nodes.map(n => n.data?.file_name).filter(Boolean)).size;
+        return { tables, queries, colEdges, files };
+    }, [graphData]);
 
     // ── Handlers ──────────────────────────────────────
     const handleSidebarResize = useCallback((width) => {
@@ -74,6 +85,16 @@ function App() {
             setEditingTabName('');
         }
     }, [handleTabRenameSubmit]);
+
+    const handleColumnClick = useCallback((tableName, colName) => {
+        fetchImpact(tableName, colName);
+    }, [fetchImpact]);
+
+    // ── Keyboard shortcuts ────────────────────────────
+    useKeyboardShortcuts({
+        onVisualize: () => visualize(activeFile.content, activeFile.name, dialect || null),
+        onClosePanel: () => setImpactData(null),
+    });
 
     // ── Render ────────────────────────────────────────
     return (
@@ -155,6 +176,18 @@ function App() {
                         >
                             +
                         </button>
+                        <label
+                            className="px-2 py-1 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                            title="Import .sql file"
+                        >
+                            <input
+                                type="file"
+                                accept=".sql"
+                                className="hidden"
+                                onChange={(e) => importFile(e.target.files[0])}
+                            />
+                            ↑
+                        </label>
                     </div>
                 </div>
 
@@ -168,11 +201,11 @@ function App() {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="px-4 pb-4 space-y-3 flex-shrink-0">
+                <div className="px-4 pb-4 space-y-3 flex-shrink-0 overflow-y-auto">
                     {/* Primary actions row */}
                     <div className="flex gap-2">
                         <button
-                            onClick={() => visualize(activeFile.content, activeFile.name)}
+                            onClick={() => visualize(activeFile.content, activeFile.name, dialect || null)}
                             disabled={loading}
                             className={`flex-1 py-2 px-4 rounded-lg font-bold text-white text-sm transition-all duration-200 ${loading
                                 ? 'bg-blue-300 dark:bg-blue-800 cursor-not-allowed'
@@ -232,6 +265,27 @@ function App() {
                         </button>
                     </div>
 
+                    {/* Dialect Selector */}
+                    <div>
+                        <label className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 mb-1 block uppercase tracking-widest">SQL Dialect</label>
+                        <select
+                            value={dialect}
+                            onChange={(e) => setDialect(e.target.value)}
+                            className="w-full py-1.5 px-2 rounded-lg text-xs border
+                                       bg-white dark:bg-gray-800
+                                       border-gray-200 dark:border-gray-700
+                                       text-gray-700 dark:text-gray-300
+                                       focus:outline-none focus:border-blue-400"
+                        >
+                            <option value="">Auto</option>
+                            <option value="bigquery">BigQuery</option>
+                            <option value="snowflake">Snowflake</option>
+                            <option value="spark">Spark</option>
+                            <option value="duckdb">DuckDB</option>
+                            <option value="postgres">PostgreSQL</option>
+                        </select>
+                    </div>
+
                     {/* Reset demos row */}
                     <div className="flex gap-2">
                         <button
@@ -281,7 +335,7 @@ function App() {
 
             {/* ═══ Graph Area ═══ */}
             <div className="flex-grow h-full bg-gray-50 dark:bg-gray-900 flex flex-col transition-colors duration-300">
-                {/* Search */}
+                {/* Search + Stats */}
                 {graphData.nodes.length > 0 && (
                     <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-850 flex-shrink-0">
                         <SearchBar
@@ -290,24 +344,37 @@ function App() {
                             onFileFilterChange={setFileFilter}
                             activeFileFilter={fileFilter}
                         />
+                        <div className="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500 flex gap-3">
+                            <span>{graphStats.tables} table{graphStats.tables !== 1 ? 's' : ''}</span>
+                            <span>{graphStats.queries} quer{graphStats.queries !== 1 ? 'ies' : 'y'}</span>
+                            <span>{graphStats.colEdges} column edge{graphStats.colEdges !== 1 ? 's' : ''}</span>
+                            <span>{graphStats.files} file{graphStats.files !== 1 ? 's' : ''}</span>
+                        </div>
                     </div>
                 )}
 
                 {/* Graph */}
-                <div className="flex-grow">
+                <div className="flex-grow relative">
                     {loading ? (
                         <div className="h-full flex flex-col items-center justify-center gap-3">
                             <div className="loading-spinner" />
                             <p className="text-sm text-gray-400 dark:text-gray-500">Parsing lineage...</p>
                         </div>
                     ) : graphData.nodes.length > 0 ? (
-                        <LineageGraph
-                            initialNodes={graphData.nodes}
-                            initialEdges={graphData.edges}
-                            viewOptions={viewOptions}
-                            searchQuery={searchQuery}
-                            fileFilter={fileFilter}
-                        />
+                        <>
+                            <LineageGraph
+                                initialNodes={graphData.nodes}
+                                initialEdges={graphData.edges}
+                                viewOptions={viewOptions}
+                                searchQuery={searchQuery}
+                                fileFilter={fileFilter}
+                                onColumnClick={handleColumnClick}
+                            />
+                            <ImpactPanel
+                                impactData={impactData}
+                                onClose={() => setImpactData(null)}
+                            />
+                        </>
                     ) : (
                         <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 gap-3">
                             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="opacity-40">

@@ -8,6 +8,7 @@ Start with:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from server.config import settings
 from server.redis import redis_lifespan
 from server.rate_limiter import RateLimitMiddleware
 from server.routes.lineage import router as lineage_router
@@ -27,7 +28,7 @@ def create_app() -> FastAPI:
     # ── CORS ─────────────────────────────────────────────────────────────
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Restrict to frontend URL in production
+        allow_origins=settings.allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

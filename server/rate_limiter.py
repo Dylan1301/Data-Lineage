@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Endpoint path → max requests per minute
 RATE_LIMITS: Dict[str, int] = {
     "/api/lineage/visualize": settings.rate_limit_per_minute,
+    "/api/lineage/impact": 60,
     "/api/lineage/clear": settings.rate_limit_clear_per_minute,
     "/api/lineage/clear-file": settings.rate_limit_clear_per_minute,
 }

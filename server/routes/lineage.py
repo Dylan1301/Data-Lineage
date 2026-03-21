@@ -14,6 +14,7 @@ from server.dependencies import load_session, save_session
 from server.redis import get_redis
 from server.schemas.lineage import (
     ClearFileRequest,
+    ImpactRequest,
     LineageRequest,
 )
 from server.services import lineage_service
@@ -47,7 +48,7 @@ async def visualize(
 
     try:
         result = lineage_service.visualize(
-            lineage_map, sql=body.sql, file_name=body.file_name
+            lineage_map, sql=body.sql, file_name=body.file_name, dialect=body.dialect
         )
     except LineageException as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -70,6 +71,21 @@ async def clear_file(
     lineage_service.clear_file(lineage_map, file_name=body.file_name)
     await save_session(redis, session_id, lineage_map)
     return _session_response({"status": "ok"}, session_id)
+
+
+@router.post("/impact")
+async def impact(
+    body: ImpactRequest,
+    request: Request,
+    redis=Depends(get_redis),
+):
+    """Return upstream and downstream impact for a given column."""
+    session_id, lineage_map = await load_session(request, redis)
+    try:
+        result = lineage_service.get_impact(lineage_map, body.table, body.column)
+    except LineageException as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return result
 
 
 @router.post("/clear")

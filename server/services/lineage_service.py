@@ -18,6 +18,7 @@ def visualize(
     lineage_map: LineageMap,
     sql: Optional[str] = None,
     file_name: Optional[str] = None,
+    dialect: Optional[str] = None,
 ) -> dict:
     """
     Parse SQL (if provided) and return the current lineage graph
@@ -38,7 +39,7 @@ def visualize(
         # reflect the latest SQL without duplicating nodes.
         if file_name:
             lineage_map.clear_file(file_name)
-        lineage_map.parse_sql(sql, file_name=file_name)
+        lineage_map.parse_sql_file(sql, file_name=file_name, dialect=dialect)
 
     return to_react_flow(lineage_map.table_node_map)
 
@@ -51,3 +52,8 @@ def clear(lineage_map: LineageMap) -> None:
 def clear_file(lineage_map: LineageMap, file_name: str) -> None:
     """Clear lineage state for a specific file."""
     lineage_map.clear_file(file_name)
+
+
+def get_impact(lineage_map: LineageMap, table_name: str, col_name: str) -> dict:
+    """Return upstream and downstream column impact for a given column."""
+    return lineage_map.get_column_impact(table_name, col_name)

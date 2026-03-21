@@ -1,6 +1,7 @@
+import json
 import logging
-from typing import Dict
-from lineage.models.nodes import TableNode
+from typing import Dict, Optional
+from lineage.models.nodes import ColumnNode, TableNode, TableNodeType
 import pickle
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,213 @@ def to_graphviz(table_node_map: Dict[str, TableNode], show_table_edges: bool = T
                         )
 
     return dot
+
+# ── JSON session serialization ────────────────────────────────────────────────
+#
+# Replaces pickle for Redis session storage. Serializes only the persistent
+# graph state (table_node_map, _file_node_map, _temp_count). Circular object
+# references (upstream/downstream) are broken down to name strings and
+# reconstructed on load via a two-pass deserializer.
+#
+# Column refs are stored as "table_name::col_name" strings.
+# Table upstream/downstream are stored as plain name lists.
+
+
+def _col_ref(col: ColumnNode) -> Optional[str]:
+    """Return a stable string key for a column: 'table_name::col_name'."""
+    if col.table is None:
+        return None
+    return f"{col.table.name}::{col.name}"
+
+
+def to_session_json(lineage_map) -> str:
+    """
+    Serialise a LineageMap to a JSON string suitable for Redis storage.
+
+    Only persistent graph state is serialised:
+      - table_node_map
+      - _file_node_map  (as {file_name: [node_name, ...]})
+      - _temp_count
+
+    Circular object references are replaced with name strings so the
+    result is safe to store and is not coupled to the Python class layout.
+    """
+    nodes_data = {}
+
+    for name, node in lineage_map.table_node_map.items():
+        columns_data = {}
+        for col_name, col in node.columns.items():
+            columns_data[col_name] = {
+                "name": col.name,
+                "alias": col.alias,
+                "index": col.index,
+                "column_sources": col.column_sources,
+                "table_identifier": col.table_identifier,
+                # upstream/downstream stored as "table::col" refs
+                "upstream_refs": [r for r in (_col_ref(c) for c in col.upstream) if r],
+                "downstream_refs": [r for r in (_col_ref(c) for c in col.downstream) if r],
+            }
+
+        # col_mappings: {source_alias: [[src_col_name, target_col_name], ...]}
+        # The ColumnNode reference is replaced with just the column name string.
+        col_mappings_data = {}
+        for source_alias, mappings in node.col_mappings.items():
+            col_mappings_data[source_alias] = [
+                [src_col_name, target_col.name]
+                for src_col_name, target_col in mappings
+            ]
+
+        nodes_data[name] = {
+            "name": node.name,
+            "schema": node.schema,
+            "table_node_type": node.table_node_type.value,
+            "file_names": list(node.file_names),
+            "is_first": node.is_first,
+            # sources: {alias: node_name}
+            "sources": {alias: src.name for alias, src in node.sources.items()},
+            "col_mappings": col_mappings_data,
+            # edges as name lists
+            "upstream_names": [n.name for n in node.upstream],
+            "downstream_names": [n.name for n in node.downstream],
+            "columns": columns_data,
+        }
+
+    file_node_map_data = {
+        file_name: [n.name for n in nodes]
+        for file_name, nodes in lineage_map._file_node_map.items()
+    }
+
+    payload = {
+        "table_node_map": nodes_data,
+        "_file_node_map": file_node_map_data,
+        "_temp_count": lineage_map._temp_count,
+    }
+
+    return json.dumps(payload)
+
+
+def from_session_json(data: str):
+    """
+    Deserialise a LineageMap from a JSON string produced by ``to_session_json``.
+
+    Uses a two-pass approach:
+      Pass 1 — instantiate all TableNode and ColumnNode objects (no edges yet).
+      Pass 2 — resolve name/ref strings back into object references.
+
+    Returns ``None`` if the data is malformed, so the caller can create a
+    fresh session rather than crashing.
+    """
+    from lineage.parser.lineage_map import LineageMap  # local import to avoid circular
+
+    try:
+        payload = json.loads(data)
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.warning("Failed to parse session JSON: %s", e)
+        return None
+
+    try:
+        nodes_raw = payload["table_node_map"]
+        file_node_map_raw = payload["_file_node_map"]
+        temp_count = payload["_temp_count"]
+    except KeyError as e:
+        logger.warning("Session JSON missing key: %s", e)
+        return None
+
+    lineage_map = LineageMap()
+    lineage_map._temp_count = temp_count
+
+    # ── Pass 1: Build all TableNode and ColumnNode objects ────────────────────
+    for name, node_data in nodes_raw.items():
+        try:
+            node_type = TableNodeType(node_data["table_node_type"])
+        except ValueError:
+            node_type = TableNodeType.query
+
+        node = TableNode(
+            name=node_data["name"],
+            schema=node_data.get("schema"),
+            table_node_type=node_type,
+        )
+        node.file_names = set(node_data.get("file_names", []))
+        node.is_first = node_data.get("is_first", False)
+
+        for col_name, col_data in node_data.get("columns", {}).items():
+            col = ColumnNode(
+                name=col_data["name"],
+                alias=col_data.get("alias"),
+                index=col_data.get("index"),
+                column_sources=col_data.get("column_sources", []),
+                table_identifier=col_data.get("table_identifier"),
+            )
+            node.add_column(col)
+
+        lineage_map.table_node_map[name] = node
+
+    # ── Pass 2: Wire all edges ────────────────────────────────────────────────
+    for name, node_data in nodes_raw.items():
+        node = lineage_map.table_node_map[name]
+
+        # Table-level upstream / downstream
+        for upstream_name in node_data.get("upstream_names", []):
+            if upstream_name in lineage_map.table_node_map:
+                upstream_node = lineage_map.table_node_map[upstream_name]
+                if upstream_node not in node.upstream:
+                    node.upstream.append(upstream_node)
+
+        for downstream_name in node_data.get("downstream_names", []):
+            if downstream_name in lineage_map.table_node_map:
+                downstream_node = lineage_map.table_node_map[downstream_name]
+                if downstream_node not in node.downstream:
+                    node.downstream.append(downstream_node)
+
+        # sources dict
+        for alias, src_name in node_data.get("sources", {}).items():
+            if src_name in lineage_map.table_node_map:
+                node.sources[alias] = lineage_map.table_node_map[src_name]
+
+        # col_mappings: rebuild with ColumnNode references
+        for source_alias, mappings in node_data.get("col_mappings", {}).items():
+            node.col_mappings[source_alias] = []
+            for src_col_name, target_col_name in mappings:
+                if target_col_name in node.columns:
+                    node.col_mappings[source_alias].append(
+                        (src_col_name, node.columns[target_col_name])
+                    )
+
+        # Column-level upstream / downstream via "table::col" refs
+        for col_name, col_data in node_data.get("columns", {}).items():
+            col = node.columns.get(col_name)
+            if col is None:
+                continue
+
+            for ref in col_data.get("upstream_refs", []):
+                parts = ref.split("::", 1)
+                if len(parts) == 2:
+                    ref_table = lineage_map.table_node_map.get(parts[0])
+                    if ref_table and parts[1] in ref_table.columns:
+                        upstream_col = ref_table.columns[parts[1]]
+                        if upstream_col not in col.upstream:
+                            col.upstream.append(upstream_col)
+
+            for ref in col_data.get("downstream_refs", []):
+                parts = ref.split("::", 1)
+                if len(parts) == 2:
+                    ref_table = lineage_map.table_node_map.get(parts[0])
+                    if ref_table and parts[1] in ref_table.columns:
+                        downstream_col = ref_table.columns[parts[1]]
+                        if downstream_col not in col.downstream:
+                            col.downstream.append(downstream_col)
+
+    # ── Rebuild _file_node_map ────────────────────────────────────────────────
+    for file_name, node_names in file_node_map_raw.items():
+        for node_name in node_names:
+            if node_name in lineage_map.table_node_map:
+                lineage_map._file_node_map[file_name].append(
+                    lineage_map.table_node_map[node_name]
+                )
+
+    return lineage_map
+
 
 def to_pickle(obj) -> bytes:
     """

@@ -72,6 +72,22 @@ export default function useFileTabs() {
         setActiveFileId(demoFiles[0].id);
     }, []);
 
+    /**
+     * Import a .sql file: read its text content and open it as a new tab.
+     */
+    const importFile = useCallback((file) => {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const name = file.name.replace(/\.sql$/i, '');
+            const content = e.target.result;
+            const newId = Date.now().toString();
+            setFiles(prev => [...prev, { id: newId, name, content }]);
+            setActiveFileId(newId);
+        };
+        reader.readAsText(file);
+    }, []);
+
     return {
         files,
         activeFile,
@@ -82,5 +98,6 @@ export default function useFileTabs() {
         selectTab,
         renameTab,
         loadDemoQueries,
+        importFile,
     };
 }
