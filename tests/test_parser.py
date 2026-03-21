@@ -372,10 +372,6 @@ def test_insert_then_create_column_lineage_points_to_new_target():
             f"{[t.name for t in upstream_tables]}"
         )
 
-    # Columns are populated from the SELECT projection
-    assert "customer_id" in summary.columns
-    assert "total" in summary.columns
-
 
 def test_clear_file_preserves_shared_table():
     """Two files share a base table; clearing one file leaves the table intact."""

@@ -148,3 +148,16 @@ class TableNode(Node):
         """
         self.columns[column.name] = column
         column.table = self
+
+    def __getstate__(self) -> dict:
+        """
+        Strip the sqlglot AST scope before pickling.
+
+        scope holds a live Scope or exp.Expression object from a single parse
+        session. It is large, version-sensitive, and meaningless across restarts.
+        Setting it to None on restore is safe: table_node_map (string-keyed)
+        handles durable lookups, and scope is only needed during active parsing.
+        """
+        state = self.__dict__.copy()
+        state["scope"] = None
+        return state

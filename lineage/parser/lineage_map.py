@@ -1,37 +1,34 @@
 import logging
 from collections import defaultdict
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from sqlglot import exp, parse_one
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, build_scope
 
-from lineage.exceptions import LineageException, TableNotFoundException
+from lineage.exceptions import LineageException
 from lineage.models.nodes import ColumnNode, TableNode, TableNodeType
 
 logger = logging.getLogger(__name__)
+
 
 class LineageMap:
     """
     Main class for parsing SQL and building column-level lineage
 
     Attributes:
-        sql_directory: Optional directory path for lazy-loading table definitions
         original_scope: Root scope from the parsed SQL
         visited_scopes: Cache mapping scopes to their TableNode
         table_node_map: Map of table names to TableNode objects
         start_node: The root table node of the lineage
-        table_file_cache: Cache mapping table names to SQL file paths
     """
-    def __init__(self, sql_directory: Optional[str] = None):
-        self.sql_directory = Path(sql_directory) if sql_directory else None
+
+    def __init__(self):
         self.original_scope: Optional[Scope] = None
         self.visited_scopes: Dict[Scope | exp.Expression, TableNode] = {}
         self.table_node_map: Dict[str, TableNode] = {}
         self.start_node: Optional[TableNode] = None
         self._temp_count = 0
-        self._table_file_cache: Dict[str, Path] = {}
         self._file_node_map: Dict[str, List[TableNode]] = defaultdict(list)
 
     def clear(self) -> None:
@@ -48,13 +45,13 @@ class LineageMap:
 
         self.table_node_map.clear()
         self.visited_scopes.clear()
-        self._table_file_cache.clear()
         self._file_node_map.clear()
         self.original_scope = None
         self.start_node = None
         self._temp_count = 0
 
-    def parse_sql(self, sql: str, name: Optional[str] = None, file_name: Optional[str] = None, dialect: Optional[str] = None) -> None:
+    def parse_sql(self, sql: str, name: Optional[str] = None, file_name: Optional[str] = None,
+                  dialect: Optional[str] = None) -> None:
         """
         Parse SQL query and build lineage graph.
 
@@ -116,10 +113,10 @@ class LineageMap:
         return f"{prefix}_{self._temp_count}"
 
     def _parse_column(
-        self,
-        col: exp.Expression | exp.Column | exp.Alias,
-        table: TableNode | None = None,
-        index: Optional[int] = None
+            self,
+            col: exp.Expression | exp.Column | exp.Alias,
+            table: TableNode | None = None,
+            index: Optional[int] = None
     ) -> ColumnNode:
         """
         Parse a column expression into a ColumnNode
@@ -140,11 +137,11 @@ class LineageMap:
         return ColumnNode(alias, column_sources=column_sources, index=index)
 
     def _parse_scope(
-        self,
-        scope: Scope | exp.Table,
-        name: Optional[str] = None,
-        parent_name: Optional[str] = None,
-        file_name: Optional[str] = None
+            self,
+            scope: Scope | exp.Table,
+            name: Optional[str] = None,
+            parent_name: Optional[str] = None,
+            file_name: Optional[str] = None
     ) -> TableNode:
         """
         Parse a scope (subquery/CTE) into a TableNode
@@ -212,8 +209,8 @@ class LineageMap:
             self,
             scope: Scope,
             table: TableNode,
-            parent_name: Optional[str]=None,
-            file_name: Optional[str]=None) -> None:
+            parent_name: Optional[str] = None,
+            file_name: Optional[str] = None) -> None:
         """
         Process FROM/JOIN source tables and subqueries
 
@@ -232,11 +229,11 @@ class LineageMap:
             table.add_downstream(child_table)
 
     def _parse_union(
-        self,
-        scope: Scope,
-        table: TableNode,
-        parent_name: Optional[str] = None,
-        file_name: Optional[str] = None,
+            self,
+            scope: Scope,
+            table: TableNode,
+            parent_name: Optional[str] = None,
+            file_name: Optional[str] = None,
     ) -> None:
         """Parse UNION branches and connect them as children of *table*."""
         for union_scope in scope.union_scopes:
@@ -250,10 +247,10 @@ class LineageMap:
             self._connect_column_lineage_union(table, child)
 
     def _parse_table(
-        self,
-        table: exp.Table,
-        file_name: Optional[str] = None,
-        overwrite: bool = False,
+            self,
+            table: exp.Table,
+            file_name: Optional[str] = None,
+            overwrite: bool = False,
     ) -> TableNode:
         """
         Parse a table reference into a TableNode (base table without columns).
@@ -346,9 +343,9 @@ class LineageMap:
                 )
 
     def _parse_create_table(
-        self,
-        create: exp.Create,
-        file_name: Optional[str] = None,
+            self,
+            create: exp.Create,
+            file_name: Optional[str] = None,
     ) -> Optional[TableNode]:
         """
         Parse CREATE TABLE statement and extract column definitions.
@@ -383,68 +380,6 @@ class LineageMap:
 
         return new_root
 
-    def _resolve_table_file(self, table_name: str) -> Optional[Path]:
-        """
-        Find SQL file containing the table definition
-
-        :param table_name: Name of the table to find
-        :return: Path to SQL file, or None if not found
-        """
-        if not self.sql_directory or not self.sql_directory.exists():
-            return None
-
-        # Check cache first
-        if table_name in self._table_file_cache:
-            return self._table_file_cache[table_name]
-
-        # Extract base table name (remove schema prefix if exists)
-        base_name = table_name.split(".")[-1]
-
-        # Search patterns
-        patterns = [
-            f"{base_name}.sql",
-            f"{base_name.lower()}.sql",
-            f"{base_name.upper()}.sql",
-        ]
-
-        # Search in directory and subdirectories
-        for pattern in patterns:
-            # Direct match in sql_directory
-            candidate = self.sql_directory / pattern
-            if candidate.exists():
-                self._table_file_cache[table_name] = candidate
-                return candidate
-
-            # Recursive search
-            matches = list(self.sql_directory.rglob(pattern))
-            if matches:
-                self._table_file_cache[table_name] = matches[0]
-                return matches[0]
-
-        return None
-
-    def _load_table_definition(self, table_name: str) -> str:
-        """
-        Load SQL CREATE statement from file
-
-        :param table_name: Name of the table
-        :return: SQL CREATE statement
-        :raises TableNotFoundException: If table file not found
-        """
-        file_path = self._resolve_table_file(table_name)
-
-        if not file_path:
-            raise TableNotFoundException(
-                f"Could not find SQL file for table '{table_name}' in {self.sql_directory}"
-            )
-
-        try:
-            return file_path.read_text()
-        except Exception as e:
-            raise TableNotFoundException(
-                f"Error reading table definition for '{table_name}': {e}"
-            )
-
     def _cleanup_source_refs(self, node: TableNode) -> None:
         """
         Remove node from all parent sources/col_mappings dicts.
@@ -466,7 +401,7 @@ class LineageMap:
         if table_node.name in self.table_node_map:
             self.table_node_map.pop(table_node.name)
 
-        if table_node.scope in self.visited_scopes:
+        if table_node.scope is not None and table_node.scope in self.visited_scopes:
             self.visited_scopes.pop(table_node.scope)
 
         if not columns_only:
@@ -549,27 +484,26 @@ class LineageMap:
 
         del self._file_node_map[file_name]
 
-
     def extend_table(
-        self,
-        table_name: Optional[str] = None,
-        sql: Optional[str] = None,
-        file_name: Optional[str] = None
+            self,
+            table_name: Optional[str] = None,
+            sql: Optional[str] = None,
+            file_name: Optional[str] = None
     ) -> TableNode:
         """
-        Load table definition with columns and connect to existing lineage
-
-        This method supports lazy loading - either provide SQL directly or let it
-        auto-discover the table definition from the sql_directory.
+        Load table definition with columns and connect to existing lineage.
 
         :param table_name: Name of the table to extend
-        :param sql: Optional SQL CREATE statement (if None, auto-load from files)
+        :param sql: SQL CREATE statement (use SqlFileLoader to load from a file)
+        :param file_name: File to associate with the parsed statement
         :return: The extended TableNode
-        :raises TableNotFoundException: If table definition cannot be found
+        :raises LineageException: If sql is not provided or cannot be parsed
         """
-        # Load SQL if not provided
         if sql is None:
-            sql = self._load_table_definition(table_name)
+            raise LineageException(
+                f"sql is required for extend_table('{table_name}') — "
+                "use SqlFileLoader to load SQL from a file"
+            )
 
         # Parse the CREATE statement
         create_ast = parse_one(sql)
@@ -590,25 +524,20 @@ class LineageMap:
         # If table doesn't exist in graph yet, just add it
         if table_name not in self.table_node_map:
             self.table_node_map[table_name] = new_node
-            self.visited_scopes[new_node.scope] = new_node
+            if new_node.scope is not None:
+                self.visited_scopes[new_node.scope] = new_node
             return new_node
 
         # Replace existing table node with the extended version
         old_node = self.table_node_map[table_name]
 
-        # Update all upstream references
+        # Update all upstream references (nodes that consume old_node as a source)
         for upstream_node in old_node.upstream:
-            # Replace in sources dictionary
             for source_name, source_table in upstream_node.sources.items():
                 if source_table == old_node:
                     upstream_node.sources[source_name] = new_node
-                    # Reconnect column lineage
                     self._reconnect_column_lineage(upstream_node, source_name)
             upstream_node.add_downstream(new_node)
-
-        # Update all downstream references
-        for downstream_node in old_node.downstream:
-            downstream_node.add_upstream(new_node)
 
         # Remove old_node from _file_node_map so clear_file doesn't later mistake it
         # for a live node and pop new_node out of table_node_map/visited_scopes
@@ -617,6 +546,16 @@ class LineageMap:
             if old_node in file_list:
                 file_list.remove(old_node)
 
+        # Re-wire column consumers to corresponding new columns before detaching.
+        # Without this, any column that had old_col in its upstream (e.g. an INSERT
+        # scope column) would be left with an empty upstream after detach, silently
+        # dropping that column's lineage.
+        for old_col in old_node.columns.values():
+            new_col = new_node.columns.get(old_col.name)
+            if new_col:
+                for consumer_col in list(old_col.downstream):
+                    consumer_col.add_upstream(new_col)
+
         # Clean up old node
         for old_col in old_node.columns.values():
             old_col.detach()
@@ -624,35 +563,17 @@ class LineageMap:
 
         # Update mappings
         self.table_node_map[table_name] = new_node
-        self.visited_scopes[old_node.scope] = new_node
-        self.visited_scopes[new_node.scope] = new_node
+        if old_node.scope is not None:
+            self.visited_scopes[old_node.scope] = new_node
+        if new_node.scope is not None:
+            self.visited_scopes[new_node.scope] = new_node
 
         return new_node
-
-    def auto_extend_missing_tables(self) -> Dict[str, TableNode]:
-        """
-        Automatically extend all tables that don't have column definitions
-
-        :return: Dictionary mapping table names to extended TableNodes
-        """
-        extended = {}
-
-        for table_name, table_node in list(self.table_node_map.items()):
-            # Only extend tables without columns (base table references)
-            if not table_node.columns and isinstance(table_node.scope, exp.Table):
-                try:
-                    extended_node = self.extend_table(table_name)
-                    extended[table_name] = extended_node
-                    logger.info(f"Auto-extended table: {table_name}")
-                except TableNotFoundException as e:
-                    logger.warning(f"Could not auto-extend {table_name}: {e}")
-
-        return extended
 
     # ── INSERT / MERGE support ────────────────────────────────────────────
 
     def _ensure_column(
-        self, table_node: TableNode, col_name: str, index: int = 0
+            self, table_node: TableNode, col_name: str, index: int = 0
     ) -> ColumnNode:
         """
         Get a column by name, or create it on the table if it doesn't exist.
@@ -670,7 +591,7 @@ class LineageMap:
         return col
 
     def _parse_insert(
-        self, insert: exp.Insert, file_name: Optional[str] = None
+            self, insert: exp.Insert, file_name: Optional[str] = None
     ) -> TableNode:
         """
         Parse INSERT INTO target_table [(columns)] SELECT ... FROM source.
@@ -714,7 +635,6 @@ class LineageMap:
             select_scope, parent_name="Insert" + target_table_node.name, file_name=file_name
         )
 
-
         # 4. Map columns: target ← select output, by ordinal position
         select_columns = list(select_node.columns.values())
         select_columns.sort(key=lambda col: col.index)
@@ -726,7 +646,7 @@ class LineageMap:
             for i, (target_col_name, select_col) in enumerate(zip(target_columns, select_columns)):
                 target_col = self._ensure_column(target_table_node, target_col_name, index=i)
 
-                    # add new_scope_source into the table_node
+                # add new_scope_source into the table_node
                 select_col.add_upstream(target_col)
                 target_table_node.col_mappings[select_node.name].append((select_col.name, target_col))
         else:
@@ -741,7 +661,7 @@ class LineageMap:
         return target_table_node
 
     def _parse_merge(
-        self, merge: exp.Merge, file_name: Optional[str] = None
+            self, merge: exp.Merge, file_name: Optional[str] = None
     ) -> TableNode:
         """
         Parse MERGE INTO target USING source ON condition WHEN ...
@@ -793,10 +713,10 @@ class LineageMap:
         return target_table_node
 
     def _process_merge_when(
-        self,
-        when: exp.When,
-        target: TableNode,
-        source: TableNode,
+            self,
+            when: exp.When,
+            target: TableNode,
+            source: TableNode,
     ) -> None:
         """
         Extract column assignments from a single WHEN clause and connect lineage.
@@ -867,3 +787,23 @@ class LineageMap:
             "upstream": bfs(start, "upstream"),
             "downstream": bfs(start, "downstream"),
         }
+
+    # ── Pickle support ────────────────────────────────────────────────────────
+
+    def __getstate__(self) -> dict:
+        """
+        Strip AST-backed fields before pickling.
+
+        visited_scopes is keyed by sqlglot Scope/Expression objects which are
+        live Python object references — they cannot survive serialisation and
+        would never match keys from a future parse session anyway.
+        original_scope is similarly a live AST node.
+
+        After unpickling, visited_scopes starts empty and is repopulated
+        transparently by any subsequent parse_sql / extend_table calls.
+        table_node_map (string-keyed) provides all durable lookups.
+        """
+        state = self.__dict__.copy()
+        state["visited_scopes"] = {}
+        state["original_scope"] = None
+        return state

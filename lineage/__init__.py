@@ -7,6 +7,7 @@ Public API:
 """
 
 from lineage.parser.lineage_map import LineageMap
+from lineage.parser.sql_file_loader import SqlFileLoader
 from lineage.exceptions import (
     LineageException,
     TableNotFoundException,
@@ -15,6 +16,7 @@ from lineage.exceptions import (
 
 __all__ = [
     "LineageMap",
+    "SqlFileLoader",
     "LineageException",
     "TableNotFoundException",
     "ColumnMismatchException",
