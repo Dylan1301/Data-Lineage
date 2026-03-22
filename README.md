@@ -1,6 +1,6 @@
 # SQL Lineage Visualizer
 
-A full-stack tool for parsing SQL and rendering **column-level lineage graphs** interactively. Paste SQL queries across multiple tabs - the backend builds a directed graph showing exactly how each column flows through your data pipeline, and the frontend renders it as an explorable React Flow canvas.
+A full-stack tool for parsing SQL and rendering **column-level lineage graphs** interactively. Paste SQL queries across multiple tabs, the backend builds a directed graph showing exactly how each column flows through your data pipeline, and the frontend renders it as an explorable React Flow canvas.
 
 ![LineageDemo.gif](docs/image/LineageDemo.gif)
 
