@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 800;
-const DEFAULT_WIDTH = 420;
+export const DEFAULT_WIDTH = 420;
 
 const ResizeHandle = ({ onWidthChange }) => {
     const [isDragging, setIsDragging] = useState(false);
@@ -50,5 +50,4 @@ const ResizeHandle = ({ onWidthChange }) => {
     );
 };
 
-ResizeHandle.DEFAULT_WIDTH = DEFAULT_WIDTH;
 export default ResizeHandle;

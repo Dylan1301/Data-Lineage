@@ -29,7 +29,7 @@ class TableModel {
             is_first: data.is_first || false,
 
         };
-        this.position = position || { x: 0, y: 0 };
+        this.position = position;
     }
 
     /**

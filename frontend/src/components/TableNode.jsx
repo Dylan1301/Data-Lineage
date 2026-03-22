@@ -26,7 +26,7 @@ const TableNode = memo(({ data }) => {
                 <span className="truncate">{data.label}</span>
                 <div className="flex items-center gap-1">
                     {data.table_node_type === 'table' && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 font-medium">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 font-medium">
                             TABLE
                         </span>
                     )}
@@ -36,9 +36,9 @@ const TableNode = memo(({ data }) => {
                                 e.stopPropagation();
                                 data.onToggleMinimize && data.onToggleMinimize(data.id);
                             }}
-                            className="ml-1 text-xs px-1.5 py-0.5 rounded 
-                                       bg-gray-200 dark:bg-gray-600 
-                                       hover:bg-gray-300 dark:hover:bg-gray-500 
+                            className="ml-1 text-sm px-2 py-1 rounded
+                                       bg-gray-200 dark:bg-gray-600
+                                       hover:bg-gray-300 dark:hover:bg-gray-500
                                        text-gray-600 dark:text-gray-300 transition-colors"
                             title={data.isMinimized ? "Expand Lineage" : "Collapse Lineage"}
                         >
@@ -49,7 +49,7 @@ const TableNode = memo(({ data }) => {
             </div>
 
             {/* Columns */}
-            <div className="table-columns p-1.5">
+            <div className="table-columns p-2">
                 {data.columns.map((col) => {
                     const isColHighlighted = data.highlightedColumns && data.highlightedColumns.has(col.id);
                     const isColSearchMatch = data.searchMatchColumns && data.searchMatchColumns.has(col.id);
@@ -64,13 +64,15 @@ const TableNode = memo(({ data }) => {
                                 ${isColSearchMatch ? '!bg-emerald-50 dark:!bg-emerald-900/20 !text-emerald-700 dark:!text-emerald-300 font-medium' : ''}`}
                             onMouseEnter={() => data.onColumnHover && data.onColumnHover(col.id)}
                             onMouseLeave={() => data.onColumnLeave && data.onColumnLeave()}
+                            onClick={(e) => { e.stopPropagation(); data.onColumnClick && data.onColumnClick(data.label, col.name); }}
                         >
                             {/* Left handle */}
                             <Handle
                                 type="target"
                                 position={Position.Left}
                                 id={col.id}
-                                className={`!w-2 !h-2 !bg-gray-400 dark:!bg-gray-500 ${isColHighlighted ? '!bg-purple-500' : ''}`}
+                                isConnectable={false}
+                                className={`!w-2.5 !h-2.5 !bg-gray-300 dark:!bg-gray-500 !border !border-gray-400 dark:!border-gray-400 ${isColHighlighted ? '!bg-purple-500 !border-purple-400' : ''}`}
                                 style={{ left: -10 }}
                             />
 
@@ -81,7 +83,8 @@ const TableNode = memo(({ data }) => {
                                 type="source"
                                 position={Position.Right}
                                 id={col.id}
-                                className={`!w-2 !h-2 !bg-gray-400 dark:!bg-gray-500 ${isColHighlighted ? '!bg-purple-500' : ''}`}
+                                isConnectable={false}
+                                className={`!w-2.5 !h-2.5 !bg-gray-300 dark:!bg-gray-500 !border !border-gray-400 dark:!border-gray-400 ${isColHighlighted ? '!bg-purple-500 !border-purple-400' : ''}`}
                                 style={{ right: -10 }}
                             />
                         </div>

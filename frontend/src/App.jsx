@@ -1,34 +1,47 @@
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { Toaster } from 'react-hot-toast'
 
-// Hooks
+// Context / Hooks
+import { useTheme } from './context/ThemeContext'
 import useLineageApi from './hooks/useLineageApi'
 import useFileTabs from './hooks/useFileTabs'
-import useThemeDetector from './hooks/useThemeDetector'
+import useKeyboardShortcuts from './hooks/useKeyboardShortcuts'
 
 // Components
 import LineageGraph from './components/LineageGraph'
-import ThemeToggle from './components/ThemeToggle'
-import SqlEditor from './components/SqlEditor'
-import ResizeHandle from './components/ResizeHandle'
+import ImpactPanel from './components/ImpactPanel'
+import Sidebar from './components/Sidebar'
+import ResizeHandle, { DEFAULT_WIDTH } from './components/ResizeHandle'
 import SearchBar from './components/SearchBar'
-
-import './App.css'
 
 function App() {
     // ── Hooks ──────────────────────────────────────────
-    const { graphData, loading, visualize, clearGraph, clearFile } = useLineageApi();
-    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab } = useFileTabs();
-    const isDark = useThemeDetector();
+    const { isDark } = useTheme();
+    const { graphData, loading, impactData, setImpactData, visualize, visualizeAll, clearGraph, clearFile, fetchImpact, initGraph } = useLineageApi();
+    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab, renameTab, loadDemoQueries, importFile, importFolder, downloadAllFiles } = useFileTabs();
+
+    // Restore graph on first load
+    useEffect(() => {
+        const queries = files
+            .filter(f => f.content?.trim())
+            .map(f => ({ sql: f.content, fileName: f.name }));
+        initGraph(queries);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ── Local UI state ────────────────────────────────
     const [viewOptions, setViewOptions] = useState({ showTable: true, showColumn: true });
     const [searchQuery, setSearchQuery] = useState('');
     const [fileFilter, setFileFilter] = useState(null);
+    const [dialect, setDialect] = useState('');
     const [sidebarWidth, setSidebarWidth] = useState(() => {
         const saved = localStorage.getItem('sidebarWidth');
-        return saved ? parseInt(saved, 10) : ResizeHandle.DEFAULT_WIDTH;
+        return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
     });
+
+    // Tab renaming state
+    const [editingTabId, setEditingTabId] = useState(null);
+    const [editingTabName, setEditingTabName] = useState('');
 
     // ── Derived values ────────────────────────────────
     const fileNames = graphData.nodes
@@ -36,11 +49,58 @@ function App() {
         .filter(Boolean)
         .filter((v, i, a) => a.indexOf(v) === i);
 
+    const graphStats = React.useMemo(() => {
+        const tables = graphData.nodes.filter(n => n.data?.table_node_type === 'table').length;
+        const queries = graphData.nodes.filter(n => n.data?.table_node_type !== 'table').length;
+        const colEdges = graphData.edges.filter(e => e.edge_type === 'column_edge').length;
+        const files = new Set(graphData.nodes.map(n => n.data?.file_name).filter(Boolean)).size;
+        return { tables, queries, colEdges, files };
+    }, [graphData]);
+
     // ── Handlers ──────────────────────────────────────
     const handleSidebarResize = useCallback((width) => {
         setSidebarWidth(width);
         localStorage.setItem('sidebarWidth', width.toString());
     }, []);
+
+    const handleRunAllDemos = useCallback(() => {
+        const queries = files
+            .filter(f => f.content?.trim())
+            .map(f => ({ sql: f.content, fileName: f.name }));
+        visualizeAll(queries);
+    }, [files, visualizeAll]);
+
+    const handleTabDoubleClick = useCallback((file) => {
+        setEditingTabId(file.id);
+        setEditingTabName(file.name);
+    }, []);
+
+    const handleTabRenameSubmit = useCallback(() => {
+        if (editingTabId && editingTabName.trim()) {
+            renameTab(editingTabId, editingTabName);
+        }
+        setEditingTabId(null);
+        setEditingTabName('');
+    }, [editingTabId, editingTabName, renameTab]);
+
+    const handleTabRenameKeyDown = useCallback((e) => {
+        if (e.key === 'Enter') {
+            handleTabRenameSubmit();
+        } else if (e.key === 'Escape') {
+            setEditingTabId(null);
+            setEditingTabName('');
+        }
+    }, [handleTabRenameSubmit]);
+
+    const handleColumnClick = useCallback((tableName, colName) => {
+        fetchImpact(tableName, colName);
+    }, [fetchImpact]);
+
+    // ── Keyboard shortcuts ────────────────────────────
+    useKeyboardShortcuts({
+        onVisualize: () => visualize(activeFile.content, activeFile.name, dialect || null),
+        onClosePanel: () => setImpactData(null),
+    });
 
     // ── Render ────────────────────────────────────────
     return (
@@ -65,145 +125,46 @@ function App() {
             />
 
             {/* ═══ Sidebar ═══ */}
-            <div
-                className="border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-850 flex flex-col shadow-lg z-10 transition-colors duration-300"
-                style={{ width: sidebarWidth, minWidth: 280, maxWidth: 800 }}
-            >
-                {/* Header */}
-                <div className="p-4 pb-0">
-                    <div className="flex items-center justify-between mb-4">
-                        <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100 tracking-tight">
-                            Lineage Visualizer
-                        </h1>
-                        <ThemeToggle />
-                    </div>
-
-                    {/* Tabs */}
-                    <div className="flex gap-1 overflow-x-auto pb-2 mb-2 border-b border-gray-200 dark:border-gray-700">
-                        {files.map(file => (
-                            <div
-                                key={file.id}
-                                onClick={() => selectTab(file.id)}
-                                className={`group flex items-center gap-2 px-3 py-1.5 rounded-t text-xs font-medium cursor-pointer transition-colors whitespace-nowrap border-t border-l border-r ${activeFileId === file.id
-                                    ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300 z-10'
-                                    : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-                                    }`}
-                                style={{ marginBottom: '-1px' }}
-                            >
-                                <span>{file.name}</span>
-                                {files.length > 1 && (
-                                    <button
-                                        onClick={(e) => closeTab(file.id, e)}
-                                        className="opacity-0 group-hover:opacity-100 hover:text-red-500 dark:hover:text-red-400 transition-opacity"
-                                    >
-                                        ×
-                                    </button>
-                                )}
-                            </div>
-                        ))}
-                        <button
-                            onClick={addTab}
-                            className="px-2 py-1 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 font-bold transition-colors"
-                            title="New Query"
-                        >
-                            +
-                        </button>
-                    </div>
-                </div>
-
-                {/* SQL Editor */}
-                <div className="flex-grow flex flex-col px-4 mb-3 min-h-0">
-                    <SqlEditor
-                        value={activeFile.content}
-                        onChange={updateFileContent}
-                        darkMode={isDark}
-                    />
-                </div>
-
-                {/* Action Buttons */}
-                <div className="px-4 pb-4 space-y-3 flex-shrink-0">
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => visualize(activeFile.content, activeFile.name)}
-                            disabled={loading}
-                            className={`flex-1 py-2 px-4 rounded-lg font-bold text-white text-sm transition-all duration-200 ${loading
-                                ? 'bg-blue-300 dark:bg-blue-800 cursor-not-allowed'
-                                : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 shadow hover:shadow-md'
-                                }`}
-                        >
-                            {loading ? (
-                                <span className="flex items-center justify-center gap-2">
-                                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                    </svg>
-                                    Processing...
-                                </span>
-                            ) : 'Visualize Lineage'}
-                        </button>
-
-                        <button
-                            onClick={clearGraph}
-                            disabled={loading || graphData.nodes.length === 0}
-                            className="px-3 py-2 rounded-lg font-semibold text-red-600 dark:text-red-400 text-sm
-                                       border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20
-                                       hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors
-                                       disabled:opacity-40 disabled:cursor-not-allowed"
-                            title="Clear All"
-                        >
-                            Clear
-                        </button>
-                    </div>
-
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => clearFile(activeFile.name)}
-                            disabled={loading || graphData.nodes.length === 0}
-                            className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm
-                                       text-red-600 dark:text-red-400
-                                       border border-red-200 dark:border-red-800
-                                       bg-red-50 dark:bg-red-900/20
-                                       hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors
-                                       disabled:opacity-40 disabled:cursor-not-allowed"
-                            title="Clear File"
-                        >
-                            Clear File
-                        </button>
-                    </div>
-
-                    {/* View Options */}
-                    <div>
-                        <label className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 mb-1 block uppercase tracking-widest">View Options</label>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => setViewOptions(prev => ({ ...prev, showTable: !prev.showTable }))}
-                                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-medium border transition-colors ${viewOptions.showTable
-                                    ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                                    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-                                    }`}
-                            >
-                                {viewOptions.showTable ? '✓ Tables' : 'Tables'}
-                            </button>
-                            <button
-                                onClick={() => setViewOptions(prev => ({ ...prev, showColumn: !prev.showColumn }))}
-                                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-medium border transition-colors ${viewOptions.showColumn
-                                    ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-700 text-orange-700 dark:text-orange-300'
-                                    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-                                    }`}
-                            >
-                                {viewOptions.showColumn ? '✓ Columns' : 'Columns'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <Sidebar
+                files={files}
+                activeFile={activeFile}
+                activeFileId={activeFileId}
+                updateFileContent={updateFileContent}
+                addTab={addTab}
+                closeTab={closeTab}
+                selectTab={selectTab}
+                renameTab={renameTab}
+                loadDemoQueries={loadDemoQueries}
+                importFile={importFile}
+                importFolder={importFolder}
+                downloadAllFiles={downloadAllFiles}
+                onVisualize={() => visualize(activeFile.content, activeFile.name, dialect || null)}
+                onClearGraph={clearGraph}
+                onRunAll={handleRunAllDemos}
+                onClearFile={() => clearFile(activeFile.name)}
+                loading={loading}
+                hasGraph={graphData.nodes.length > 0}
+                dialect={dialect}
+                setDialect={setDialect}
+                viewOptions={viewOptions}
+                setViewOptions={setViewOptions}
+                sidebarWidth={sidebarWidth}
+                isDark={isDark}
+                editingTabId={editingTabId}
+                editingTabName={editingTabName}
+                setEditingTabId={setEditingTabId}
+                setEditingTabName={setEditingTabName}
+                onTabDoubleClick={handleTabDoubleClick}
+                onTabRenameSubmit={handleTabRenameSubmit}
+                onTabRenameKeyDown={handleTabRenameKeyDown}
+            />
 
             {/* ═══ Resize Handle ═══ */}
             <ResizeHandle onWidthChange={handleSidebarResize} />
 
             {/* ═══ Graph Area ═══ */}
             <div className="flex-grow h-full bg-gray-50 dark:bg-gray-900 flex flex-col transition-colors duration-300">
-                {/* Search */}
+                {/* Search + Stats */}
                 {graphData.nodes.length > 0 && (
                     <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-850 flex-shrink-0">
                         <SearchBar
@@ -212,24 +173,37 @@ function App() {
                             onFileFilterChange={setFileFilter}
                             activeFileFilter={fileFilter}
                         />
+                        <div className="mt-1.5 text-xs text-gray-400 dark:text-gray-500 flex gap-3">
+                            <span>{graphStats.tables} table{graphStats.tables !== 1 ? 's' : ''}</span>
+                            <span>{graphStats.queries} quer{graphStats.queries !== 1 ? 'ies' : 'y'}</span>
+                            <span>{graphStats.colEdges} column edge{graphStats.colEdges !== 1 ? 's' : ''}</span>
+                            <span>{graphStats.files} file{graphStats.files !== 1 ? 's' : ''}</span>
+                        </div>
                     </div>
                 )}
 
                 {/* Graph */}
-                <div className="flex-grow">
+                <div className="flex-grow relative">
                     {loading ? (
                         <div className="h-full flex flex-col items-center justify-center gap-3">
                             <div className="loading-spinner" />
                             <p className="text-sm text-gray-400 dark:text-gray-500">Parsing lineage...</p>
                         </div>
                     ) : graphData.nodes.length > 0 ? (
-                        <LineageGraph
-                            initialNodes={graphData.nodes}
-                            initialEdges={graphData.edges}
-                            viewOptions={viewOptions}
-                            searchQuery={searchQuery}
-                            fileFilter={fileFilter}
-                        />
+                        <>
+                            <LineageGraph
+                                initialNodes={graphData.nodes}
+                                initialEdges={graphData.edges}
+                                viewOptions={viewOptions}
+                                searchQuery={searchQuery}
+                                fileFilter={fileFilter}
+                                onColumnClick={handleColumnClick}
+                            />
+                            <ImpactPanel
+                                impactData={impactData}
+                                onClose={() => setImpactData(null)}
+                            />
+                        </>
                     ) : (
                         <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 gap-3">
                             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="opacity-40">

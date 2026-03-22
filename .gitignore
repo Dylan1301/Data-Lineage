@@ -9,3 +9,5 @@ docs/ai/
 .ai-devkit.json
 frontend/node_modules
 AGENTS.md
+/frontend/dist
+/frontend/node_modules

@@ -1,64 +1,47 @@
-import sys
-import os
-from pathlib import Path
-from fastapi import FastAPI, HTTPException
+"""
+SQL Lineage API — Application entry point.
+
+Start with:
+    uvicorn server.main:app --reload --port 8000
+"""
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import logging
 
-# Add parent directory to sys.path to import lineage.py
-sys.path.append(str(Path(__file__).parent.parent))
-
-from lineage import LineageMap
-from server.models import LineageRequest, LineageResponse, ClearFileRequest
-
-app = FastAPI(title="SQL Lineage API")
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # For MVP, allow all. In prod, restrict to frontend URL.
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-logger = logging.getLogger("uvicorn")
-
-# Initalize LineageMap
-l = LineageMap()
-@app.post("/api/visualize", response_model=LineageResponse)
-async def visualize(request: LineageRequest):
-    try:
-        # Initialize LineageMap (assuming root dir as SQL dir for now)
-        # In a real app, this might be configurable
-        # sql_dir = Path(__file__).parent.parent
-
-        # Parse the SQL
-        if request.sql:
-            l.parse_sql(request.sql, file_name=request.file_name)
-        
-        # Convert to JSON for React Flow
-        graph_data = l.to_json()
+from server.config import settings
+from server.redis import redis_lifespan
+from server.rate_limiter import RateLimitMiddleware
+from server.routes.lineage import router as lineage_router
+from server.routes.health import router as health_router
 
 
-        return graph_data
-        
-    except Exception as e:
-        logger.error(f"Error parsing SQL: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+def create_app() -> FastAPI:
+    """Build and configure the FastAPI application."""
 
-@app.post("/api/clear-file")
-async def clear_file(request: ClearFileRequest):
-    print(request.file_name)
-    l.clear_file(request.file_name)
-    return {"status": "ok"}
+    application = FastAPI(
+        title="SQL Lineage API",
+        description="Parse SQL and build column-level lineage graphs.",
+        version="0.2.0",
+        lifespan=redis_lifespan,
+    )
 
-# @app.post("/api/visualize")
+    # ── CORS ─────────────────────────────────────────────────────────────
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allow_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-@app.post("/api/clear")
-async def clear():
-    l.clear()
-    return {"status": "ok"}
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+    # ── Rate Limiting ────────────────────────────────────────────────────
+    application.add_middleware(RateLimitMiddleware)
+
+    # ── Routers ──────────────────────────────────────────────────────────
+    application.include_router(lineage_router)
+    application.include_router(health_router)
+
+    return application
+
+
+app = create_app()

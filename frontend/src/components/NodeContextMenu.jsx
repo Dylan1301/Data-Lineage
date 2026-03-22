@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 const NodeContextMenu = ({ x, y, node, onClose, onFocusLineage, onCopyName }) => {
     const menuRef = useRef(null);
+    const [showDetails, setShowDetails] = useState(false);
 
     useEffect(() => {
         const handleClickOutside = (e) => {
@@ -67,15 +68,33 @@ const NodeContextMenu = ({ x, y, node, onClose, onFocusLineage, onCopyName }) =>
             ),
             disabled: true,
         },
+        {
+            label: showDetails ? 'Hide Details' : 'Node Details',
+            icon: (
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+            ),
+            action: () => setShowDetails(prev => !prev),
+            keepOpen: true,
+        },
     ];
+
+    // Compute adjusted position to keep menu on-screen
+    const menuWidth = 240;
+    const menuHeight = showDetails ? 400 : 200;
+    const adjustedX = Math.min(x, window.innerWidth - menuWidth - 8);
+    const adjustedY = Math.min(y, window.innerHeight - menuHeight - 8);
 
     return (
         <div
             ref={menuRef}
-            className="fixed z-50 min-w-[180px] bg-white dark:bg-gray-800 
+            className="fixed z-50 bg-white dark:bg-gray-800 
                         border border-gray-200 dark:border-gray-600 
                         rounded-lg shadow-xl overflow-hidden"
-            style={{ left: x, top: y }}
+            style={{ left: adjustedX, top: adjustedY, minWidth: 220, maxWidth: 320 }}
         >
             {/* Header */}
             <div className="px-3 py-2 bg-gray-50 dark:bg-gray-750 border-b border-gray-200 dark:border-gray-600">
@@ -104,8 +123,69 @@ const NodeContextMenu = ({ x, y, node, onClose, onFocusLineage, onCopyName }) =>
                     {item.label}
                 </button>
             ))}
+
+            {/* Expanded Details Panel */}
+            {showDetails && (
+                <div className="border-t border-gray-200 dark:border-gray-600">
+                    <div className="px-3 py-2 space-y-1.5 max-h-[300px] overflow-y-auto">
+                        {/* Metadata rows */}
+                        <DetailRow label="Table" value={node.data.label} />
+                        <DetailRow label="File" value={node.data.file_name || '—'} />
+                        <DetailRow
+                            label="Type"
+                            value={
+                                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${node.data.table_node_type === 'table'
+                                        ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400'
+                                        : 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                                    }`}>
+                                    {node.data.table_node_type?.toUpperCase() || 'QUERY'}
+                                </span>
+                            }
+                        />
+                        {node.data.schema && <DetailRow label="Schema" value={node.data.schema} />}
+                        <DetailRow
+                            label="Is First"
+                            value={node.data.is_first ? '✓ Yes' : '✗ No'}
+                        />
+                        <DetailRow label="Node ID" value={node.id} mono />
+
+                        {/* Column list */}
+                        {node.data.columns?.length > 0 && (
+                            <div className="pt-1.5 mt-1.5 border-t border-gray-100 dark:border-gray-700">
+                                <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+                                    Columns ({node.data.columns.length})
+                                </span>
+                                <div className="mt-1 space-y-0.5">
+                                    {node.data.columns.map((col, i) => (
+                                        <div
+                                            key={col.id || i}
+                                            className="flex items-center justify-between py-0.5 px-1.5 rounded text-[11px] hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                                        >
+                                            <span className="text-gray-700 dark:text-gray-300 font-medium">{col.name}</span>
+                                            <span className="text-gray-400 dark:text-gray-500 text-[9px] font-mono truncate ml-2 max-w-[100px]" title={col.id}>
+                                                {col.id?.split('.').pop()}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 
+/** Small row displaying a label: value pair */
+const DetailRow = ({ label, value, mono = false }) => (
+    <div className="flex items-start gap-2 text-[11px]">
+        <span className="text-gray-400 dark:text-gray-500 font-medium min-w-[55px] shrink-0">{label}</span>
+        <span className={`text-gray-700 dark:text-gray-300 break-all ${mono ? 'font-mono text-[10px]' : ''}`}>
+            {value}
+        </span>
+    </div>
+);
+
 export default NodeContextMenu;
+
