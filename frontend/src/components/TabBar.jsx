@@ -2,7 +2,7 @@ import React from 'react';
 
 const TabBar = ({
     files, activeFileId,
-    onSelect, onClose, onAdd, onImport,
+    onSelect, onClose, onAdd, onImport, onImportFolder,
     editingTabId, editingTabName,
     onTabDoubleClick, onRenameChange, onRenameSubmit, onRenameKeyDown,
 }) => {
@@ -61,6 +61,20 @@ const TabBar = ({
                     onChange={(e) => onImport(e.target.files[0])}
                 />
                 ↑
+            </label>
+            <label
+                className="px-2 py-1 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                title="Import folder of .sql files"
+            >
+                <input
+                    type="file"
+                    accept=".sql"
+                    webkitdirectory=""
+                    multiple
+                    className="hidden"
+                    onChange={(e) => onImportFolder(e.target.files)}
+                />
+                &#128193;
             </label>
         </div>
     );

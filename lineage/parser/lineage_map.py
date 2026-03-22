@@ -66,7 +66,7 @@ class LineageMap:
         try:
             ast = qualify(parse_one(sql, dialect=dialect), dialect=dialect)
         except Exception as e:
-            raise LineageException(f"Failed to parse SQL: {e}") from e
+            raise LineageException(str(e)) from e
 
         self.original_scope = build_scope(ast)
 

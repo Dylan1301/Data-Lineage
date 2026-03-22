@@ -198,26 +198,6 @@ def test_create_table_as_select():
     assert summary.table_node_type == TableNodeType.table
 
 
-# ── INSERT then CREATE TABLE on the same target table ─────────────────────────
-#
-# Scenario: a file (or sequential parse calls) first populates a table via
-# INSERT ... SELECT, then (re-)defines the same table with CREATE TABLE AS SELECT.
-# Both statements share the same target: sales_mart.sales
-#
-# Two bugs are exposed:
-#
-# Bug 1 — Spurious table edge
-#   extend_table iterates old_node.downstream (= the INSERT scope) and calls
-#   insert_scope.add_upstream(create_node), which also appends insert_scope into
-#   create_node.downstream.  The CREATE TABLE node ends up listing the INSERT
-#   scope as one of its *sources*, which is wrong.
-#
-# Bug 2 — Column lineage severed
-#   extend_table calls old_col.detach() on every column of the old INSERT-target
-#   node. detach() removes old_col from insert_scope_col.upstream, breaking the
-#   INSERT column chain. extend_table never re-wires those edges to the new node's
-#   columns, so all INSERT column lineage silently disappears.
-
 INSERT_SQL = """
     INSERT INTO sales_mart.sales (sale_id, sale_date, store_id, product_id, quantity, amount)
     SELECT

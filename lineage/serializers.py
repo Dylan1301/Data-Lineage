@@ -22,7 +22,7 @@ def to_react_flow(table_node_map: Dict[str, TableNode]) -> Dict:
     def get_col_id(table_name: str, col_name: str) -> str:
         return f"{table_name}::{col_name}"
 
-    # ── Build nodes ──────────────────────────────────────────────────
+    # ─Build nodes
     for table_name, table_node in table_node_map.items():
         columns = [
             {"id": get_col_id(table_name, col_name), "name": col_name, "type": "column"}
@@ -43,7 +43,7 @@ def to_react_flow(table_node_map: Dict[str, TableNode]) -> Dict:
             "position": {"x": 0, "y": 0},  # Layout handled by frontend (Dagre)
         })
 
-    # ── Build edges ──────────────────────────────────────────────────
+    # ── Build edges ──
     edge_set: set[str] = set()
 
     for table_name, table_node in table_node_map.items():
@@ -94,6 +94,13 @@ def to_react_flow(table_node_map: Dict[str, TableNode]) -> Dict:
     return {"nodes": nodes, "edges": edges}
 
 def to_graphviz(table_node_map: Dict[str, TableNode], show_table_edges: bool = True, show_column_edges: bool = True):
+    """
+    Use graphviz to generate a Graphviz Digraph object representing the lineage. Useful for quicktesting and debugging.
+    :param table_node_map:
+    :param show_table_edges:
+    :param show_column_edges:
+    :return:
+    """
     try:
         from graphviz import Digraph
     except ImportError:
@@ -136,7 +143,7 @@ def to_graphviz(table_node_map: Dict[str, TableNode], show_table_edges: bool = T
 
     return dot
 
-# ── JSON session serialization ────────────────────────────────────────────────
+# ─JSON session serialization
 #
 # Replaces pickle for Redis session storage. Serializes only the persistent
 # graph state (table_node_map, _file_node_map, _temp_count). Circular object
@@ -277,7 +284,7 @@ def from_session_json(data: str):
 
         lineage_map.table_node_map[name] = node
 
-    # ── Pass 2: Wire all edges ────────────────────────────────────────────────
+    # ─ Pass 2: Wire all edges
     for name, node_data in nodes_raw.items():
         node = lineage_map.table_node_map[name]
 
@@ -332,7 +339,7 @@ def from_session_json(data: str):
                         if downstream_col not in col.downstream:
                             col.downstream.append(downstream_col)
 
-    # ── Rebuild _file_node_map ────────────────────────────────────────────────
+    # ─ Rebuild _file_node_map
     for file_name, node_names in file_node_map_raw.items():
         for node_name in node_names:
             if node_name in lineage_map.table_node_map:

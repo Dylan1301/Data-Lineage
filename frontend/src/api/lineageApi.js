@@ -72,6 +72,16 @@ async function request(path, { method = 'POST', body = null } = {}) {
 }
 
 /**
+ * Return the current session's lineage graph without parsing any SQL.
+ * Used on page load to restore the previous graph.
+ *
+ * @returns {Promise<Object>} Raw graph JSON ({ nodes, edges })
+ */
+export async function getGraph() {
+    return request('/lineage/graph', { method: 'GET' });
+}
+
+/**
  * Parse SQL and return the lineage graph, or return the current graph if no SQL is provided.
  *
  * @param {Object} params

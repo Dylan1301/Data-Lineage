@@ -6,10 +6,10 @@ import TabBar from './TabBar';
 const Sidebar = ({
     files, activeFile, activeFileId,
     updateFileContent, addTab, closeTab, selectTab,
-    loadDemoQueries, importFile,
+    loadDemoQueries, importFile, importFolder, downloadAllFiles,
     onVisualize, onClearGraph, onRunAll, onClearFile,
     loading, dialect, setDialect, viewOptions, setViewOptions,
-    sidebarWidth, isDark,
+    sidebarWidth, isDark, hasGraph,
     editingTabId, editingTabName, setEditingTabId, setEditingTabName,
     onTabDoubleClick, onTabRenameSubmit, onTabRenameKeyDown,
 }) => {
@@ -34,6 +34,7 @@ const Sidebar = ({
                     onClose={closeTab}
                     onAdd={addTab}
                     onImport={importFile}
+                    onImportFolder={importFolder}
                     editingTabId={editingTabId}
                     editingTabName={editingTabName}
                     onTabDoubleClick={onTabDoubleClick}
@@ -54,62 +55,48 @@ const Sidebar = ({
 
             {/* Action Buttons */}
             <div className="px-4 pb-4 space-y-3 flex-shrink-0 overflow-y-auto">
-                {/* Primary actions row */}
-                <div className="flex gap-2">
-                    <button
-                        onClick={onVisualize}
-                        disabled={loading}
-                        className={`flex-1 py-2 px-4 rounded-lg font-bold text-white text-sm transition-all duration-200 ${loading
-                            ? 'bg-blue-300 dark:bg-blue-800 cursor-not-allowed'
-                            : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 shadow hover:shadow-md'
-                            }`}
-                    >
-                        {loading ? (
-                            <span className="flex items-center justify-center gap-2">
-                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                </svg>
-                                Processing...
-                            </span>
-                        ) : 'Visualize Lineage'}
-                    </button>
+                {/* Primary action */}
+                <button
+                    onClick={onVisualize}
+                    disabled={loading}
+                    className={`w-full py-2 px-4 rounded-lg font-bold text-white text-sm transition-all duration-200 ${loading
+                        ? 'bg-blue-300 dark:bg-blue-800 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 shadow hover:shadow-md'
+                        }`}
+                >
+                    {loading ? (
+                        <span className="flex items-center justify-center gap-2">
+                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            Processing...
+                        </span>
+                    ) : 'Visualize Lineage'}
+                </button>
 
-                    <button
-                        onClick={onClearGraph}
-                        disabled={loading}
-                        className="px-3 py-2 rounded-lg font-semibold text-red-600 dark:text-red-400 text-sm
-                                   border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20
-                                   hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors
-                                   disabled:opacity-40 disabled:cursor-not-allowed"
-                        title="Clear All"
-                    >
-                        Clear
-                    </button>
-                </div>
-
-                {/* Demo + Clear File row */}
+                {/* Secondary actions */}
                 <div className="flex gap-2">
                     <button
                         onClick={onRunAll}
                         disabled={loading}
-                        className={`flex-1 py-2 px-4 rounded-lg font-semibold text-sm transition-all duration-200 ${loading
-                            ? 'bg-emerald-200 dark:bg-emerald-900 text-emerald-400 cursor-not-allowed'
-                            : 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white shadow hover:shadow-md'
-                            }`}
+                        className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm transition-colors
+                                   border border-gray-300 dark:border-gray-600
+                                   text-gray-700 dark:text-gray-300
+                                   hover:bg-gray-50 dark:hover:bg-gray-700
+                                   disabled:opacity-40 disabled:cursor-not-allowed"
                         title="Send all open tabs to the backend at once"
                     >
-                        ▶ Run All Tabs
+                        Run All
                     </button>
 
                     <button
                         onClick={onClearFile}
-                        disabled={loading}
+                        disabled={loading || !hasGraph}
                         className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm
                                    text-red-600 dark:text-red-400
                                    border border-red-200 dark:border-red-800
-                                   bg-red-50 dark:bg-red-900/20
-                                   hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors
+                                   hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors
                                    disabled:opacity-40 disabled:cursor-not-allowed"
                         title="Clear File"
                     >
@@ -119,7 +106,7 @@ const Sidebar = ({
 
                 {/* Dialect Selector */}
                 <div>
-                    <label className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 mb-1 block uppercase tracking-widest">SQL Dialect</label>
+                    <label className="text-xs font-semibold text-gray-400 dark:text-gray-500 mb-1 block uppercase tracking-widest">SQL Dialect</label>
                     <select
                         value={dialect}
                         onChange={(e) => setDialect(e.target.value)}
@@ -138,26 +125,9 @@ const Sidebar = ({
                     </select>
                 </div>
 
-                {/* Reset demos row */}
-                <div className="flex gap-2">
-                    <button
-                        onClick={loadDemoQueries}
-                        disabled={loading}
-                        className="flex-1 py-1.5 px-3 rounded-lg text-xs font-medium transition-colors
-                                   text-gray-500 dark:text-gray-400
-                                   border border-gray-200 dark:border-gray-700
-                                   bg-white dark:bg-gray-800
-                                   hover:bg-gray-100 dark:hover:bg-gray-700
-                                   disabled:opacity-40 disabled:cursor-not-allowed"
-                        title="Reset all tabs to demo queries"
-                    >
-                        ↻ Reset Demo Tabs
-                    </button>
-                </div>
-
                 {/* View Options */}
                 <div>
-                    <label className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 mb-1 block uppercase tracking-widest">View Options</label>
+                    <label className="text-xs font-semibold text-gray-400 dark:text-gray-500 mb-1 block uppercase tracking-widest">View</label>
                     <div className="flex gap-2">
                         <button
                             onClick={() => setViewOptions(prev => ({ ...prev, showTable: !prev.showTable }))}
@@ -178,6 +148,40 @@ const Sidebar = ({
                             {viewOptions.showColumn ? '✓ Columns' : 'Columns'}
                         </button>
                     </div>
+                </div>
+
+                {/* Footer utilities */}
+                <div className="flex gap-2 border-t border-gray-100 dark:border-gray-700 mt-1 pt-3">
+                    <button
+                        onClick={loadDemoQueries}
+                        disabled={loading}
+                        className="flex-1 py-1.5 px-3 rounded-lg text-xs font-medium transition-colors
+                                   text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300
+                                   disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Reset all tabs to demo queries"
+                    >
+                        ↻ Reset Demos
+                    </button>
+                    <button
+                        onClick={downloadAllFiles}
+                        disabled={loading}
+                        className="flex-1 py-1.5 px-3 rounded-lg text-xs font-medium transition-colors
+                                   text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300
+                                   disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Download all tabs as .zip"
+                    >
+                        ↓ Download All
+                    </button>
+                    <button
+                        onClick={onClearGraph}
+                        disabled={loading || !hasGraph}
+                        className="flex-1 py-1.5 px-3 rounded-lg text-xs font-medium transition-colors
+                                   text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400
+                                   disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Clear graph"
+                    >
+                        Clear All
+                    </button>
                 </div>
             </div>
         </div>

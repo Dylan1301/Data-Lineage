@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { Toaster } from 'react-hot-toast'
 
 // Context / Hooks
@@ -17,8 +17,17 @@ import SearchBar from './components/SearchBar'
 function App() {
     // ── Hooks ──────────────────────────────────────────
     const { isDark } = useTheme();
-    const { graphData, loading, impactData, setImpactData, visualize, visualizeAll, clearGraph, clearFile, fetchImpact } = useLineageApi();
-    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab, renameTab, loadDemoQueries, importFile } = useFileTabs();
+    const { graphData, loading, impactData, setImpactData, visualize, visualizeAll, clearGraph, clearFile, fetchImpact, initGraph } = useLineageApi();
+    const { files, activeFile, activeFileId, updateFileContent, addTab, closeTab, selectTab, renameTab, loadDemoQueries, importFile, importFolder, downloadAllFiles } = useFileTabs();
+
+    // Restore graph on first load
+    useEffect(() => {
+        const queries = files
+            .filter(f => f.content?.trim())
+            .map(f => ({ sql: f.content, fileName: f.name }));
+        initGraph(queries);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ── Local UI state ────────────────────────────────
     const [viewOptions, setViewOptions] = useState({ showTable: true, showColumn: true });
@@ -127,11 +136,14 @@ function App() {
                 renameTab={renameTab}
                 loadDemoQueries={loadDemoQueries}
                 importFile={importFile}
+                importFolder={importFolder}
+                downloadAllFiles={downloadAllFiles}
                 onVisualize={() => visualize(activeFile.content, activeFile.name, dialect || null)}
                 onClearGraph={clearGraph}
                 onRunAll={handleRunAllDemos}
                 onClearFile={() => clearFile(activeFile.name)}
                 loading={loading}
+                hasGraph={graphData.nodes.length > 0}
                 dialect={dialect}
                 setDialect={setDialect}
                 viewOptions={viewOptions}
@@ -161,7 +173,7 @@ function App() {
                             onFileFilterChange={setFileFilter}
                             activeFileFilter={fileFilter}
                         />
-                        <div className="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500 flex gap-3">
+                        <div className="mt-1.5 text-xs text-gray-400 dark:text-gray-500 flex gap-3">
                             <span>{graphStats.tables} table{graphStats.tables !== 1 ? 's' : ''}</span>
                             <span>{graphStats.queries} quer{graphStats.queries !== 1 ? 'ies' : 'y'}</span>
                             <span>{graphStats.colEdges} column edge{graphStats.colEdges !== 1 ? 's' : ''}</span>

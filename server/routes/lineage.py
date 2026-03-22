@@ -60,6 +60,17 @@ async def visualize(
     return _session_response(result, session_id)
 
 
+@router.get("/graph")
+async def get_graph(
+    request: Request,
+    redis=Depends(get_redis),
+):
+    """Return the current session's lineage graph without parsing any SQL."""
+    session_id, lineage_map = await load_session(request, redis)
+    result = lineage_service.visualize(lineage_map, sql=None)
+    return _session_response(result, session_id)
+
+
 @router.post("/clear-file")
 async def clear_file(
     body: ClearFileRequest,

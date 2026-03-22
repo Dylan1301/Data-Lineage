@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import * as lineageApi from '../api/lineageApi';
+import { showErrorToast } from '../components/ErrorToast';
 import LineageGraphModel from '../models/LineageGraphModel';
 
 /**
@@ -34,13 +35,14 @@ export default function useLineageApi() {
         try {
             const data = await lineageApi.visualize({ sql, fileName, dialect });
             setGraphData(buildGraph(data));
+            localStorage.removeItem('lineage_cleared');
             if (typeof sql === 'string') {
                 toast.success('Lineage parsed successfully', { duration: 2000 });
             }
         } catch (err) {
             console.error(err);
             setError(err.message);
-            toast.error(err.message, { duration: 4000 });
+            showErrorToast(err.message);
         } finally {
             setLoading(false);
         }
@@ -56,10 +58,11 @@ export default function useLineageApi() {
         try {
             await lineageApi.clearGraph();
             setGraphData({ nodes: [], edges: [] });
+            localStorage.setItem('lineage_cleared', 'true');
             toast.success('Graph cleared');
         } catch (err) {
             console.error(err);
-            toast.error('Failed to clear graph');
+            showErrorToast(err.message);
         } finally {
             setLoading(false);
         }
@@ -81,8 +84,8 @@ export default function useLineageApi() {
             setGraphData(buildGraph(data));
         } catch (err) {
             console.error(err);
-            setError('Failed to clear file');
-            toast.error('Failed to clear file');
+            setError(err.message);
+            showErrorToast(err.message);
         } finally {
             setLoading(false);
         }
@@ -108,13 +111,57 @@ export default function useLineageApi() {
 
             if (data) {
                 setGraphData(buildGraph(data));
+                localStorage.removeItem('lineage_cleared');
             }
 
             toast.success(`Loaded ${queries.length} demo queries`, { duration: 2000 });
         } catch (err) {
             console.error(err);
             setError(err.message);
-            toast.error(err.message, { duration: 4000 });
+            showErrorToast(err.message);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    /**
+     * On page load: try to restore the graph from the backend session.
+     * If the session is empty (e.g. server restarted), re-submit all saved tabs.
+     *
+     * @param {{ sql: string, fileName: string }[]} queries - tabs to fall back on
+     */
+    const initGraph = useCallback(async (queries) => {
+        // Silently check if the backend session still has graph data
+        try {
+            const sessionData = await lineageApi.getGraph();
+            const sessionGraph = buildGraph(sessionData);
+            if (sessionGraph.nodes.length > 0) {
+                setGraphData(sessionGraph);
+                return;
+            }
+        } catch (err) {
+            console.error('Failed to restore session on load:', err);
+            return;
+        }
+
+        // Session is empty — only re-submit if the user didn't explicitly clear
+        if (localStorage.getItem('lineage_cleared') === 'true') return;
+
+        const valid = queries.filter(q => q.sql?.trim());
+        if (valid.length === 0) return;
+
+        setLoading(true);
+        try {
+            let lastData;
+            for (const q of valid) {
+                lastData = await lineageApi.visualize({ sql: q.sql, fileName: q.fileName });
+            }
+            if (lastData) {
+                setGraphData(buildGraph(lastData));
+            }
+        } catch (err) {
+            console.error('Failed to re-submit queries on load:', err);
+            showErrorToast(err.message);
         } finally {
             setLoading(false);
         }
@@ -129,7 +176,7 @@ export default function useLineageApi() {
             setImpactData(data);
         } catch (err) {
             console.error(err);
-            toast.error(err.message, { duration: 3000 });
+            showErrorToast(err.message);
         }
     }, []);
 
@@ -144,5 +191,6 @@ export default function useLineageApi() {
         clearGraph,
         clearFile,
         fetchImpact,
+        initGraph,
     };
 }
