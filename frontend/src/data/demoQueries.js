@@ -5,206 +5,282 @@
  *  - name: Tab label shown in the UI
  *  - sql:  The SQL statement to parse
  *
- * The five queries tell a single end-to-end retail warehouse story across
- * three layers.  Each layer's output tables become the next layer's inputs,
- * so the lineage graph connects naturally across all five tabs.
+ * The six queries form a progressive story — from the simplest possible
+ * SELECT to a multi-CTE analytical pipeline — sharing a single e-commerce
+ * schema across all tabs so the lineage graph connects naturally.
  *
  *   RAW (assumed to exist)
- *     raw.customers, raw.regions, raw.orders, raw.order_items, raw.products
+ *     raw.users, raw.orders, raw.order_lines, raw.products, raw.regions
  *
- *   CLEAN  (queries 1 & 2 — CREATE TABLE AS SELECT)
- *     clean.customers  ←  raw.customers  JOIN  raw.regions
- *     clean.order_items ← raw.order_items JOIN raw.products
+ *   CLEAN  (queries 3)
+ *     clean.users  ←  raw.users  JOIN  raw.regions  (CTAS + CTE + window fn)
  *
- *   MART   (queries 3, 4, 5)
- *     mart.customer_ltv  ← INSERT INTO … SELECT  (clean + raw)
- *     mart.daily_sales   ← CREATE TABLE AS SELECT (clean + raw)
- *     mart.customer_segments ← MERGE INTO … USING (mart + clean)
+ *   MART   (queries 4, 5, 6)
+ *     mart.user_summary     ← INSERT INTO … SELECT  (derived-table subquery)
+ *     mart.user_segments    ← MERGE INTO … USING    (subquery source)
+ *     mart.product_perf     ← CTAS with 3 chained CTEs (the complex showcase)
+ *
+ * Progression of SQL features:
+ *   1. SELECT  — simple join, no extras
+ *   2. SELECT  — two CTEs + a subquery inside a CTE
+ *   3. CTAS    — CREATE TABLE AS with CTE + ROW_NUMBER deduplication
+ *   4. INSERT  — INSERT INTO … SELECT with an inline derived table
+ *   5. MERGE   — MERGE INTO … USING a subquery
+ *   6. Complex — three CTEs chained together + window functions
  */
 const DEMO_QUERIES = [
 
-    // ── 1 · RAW → CLEAN ──────────────────────────────────────────────────────
+    // ── 1 · Simple SELECT ─────────────────────────────────────────────────────
     {
-        name: '[Clean] Customers',
-        sql: `-- Enrich raw customers with regional metadata and deduplicate by email.
--- A window function (ROW_NUMBER) inside a CTE keeps only the latest record
--- when the same email appears more than once in the source.
-CREATE TABLE clean.customers AS
-WITH enriched AS (
+        name: '[SELECT] Simple Join',
+        sql: `-- The most basic case: a two-table join.
+-- Shows that even a plain SELECT produces a clean lineage graph
+-- with column-level links from both source tables.
+SELECT
+    u.user_id,
+    u.email,
+    u.country,
+    o.order_id,
+    o.order_date,
+    o.status,
+    o.total_amount
+FROM raw.users  u
+INNER JOIN raw.orders o
+    ON o.user_id = u.user_id
+WHERE o.status = 'COMPLETED'`,
+    },
+
+    // ── 2 · SELECT with CTEs + subquery ───────────────────────────────────────
+    {
+        name: '[SELECT] CTEs + Subquery',
+        sql: `-- Two named CTEs where the second one embeds a subquery in its FROM clause.
+-- Demonstrates that the parser correctly resolves CTE-to-CTE references
+-- and tracks column lineage through the intermediate subquery layer.
+WITH us_users AS (
+    -- CTE 1: filter to a specific country
     SELECT
-        c.customer_id,
-        TRIM(UPPER(c.first_name))    AS first_name,
-        TRIM(UPPER(c.last_name))     AS last_name,
-        LOWER(TRIM(c.email))         AS email,
-        r.region_name,
-        r.country_code,
-        c.signup_date,
-        c.created_at,
-        ROW_NUMBER() OVER (
-            PARTITION BY LOWER(TRIM(c.email))
-            ORDER BY c.created_at DESC
-        )                            AS row_num
-    FROM raw.customers c
-    INNER JOIN raw.regions r
-        ON r.region_id = c.region_id
-    WHERE c.email       IS NOT NULL
-      AND c.customer_id IS NOT NULL
+        user_id,
+        email,
+        country
+    FROM raw.users
+    WHERE country = 'US'
+),
+order_totals AS (
+    -- CTE 2: aggregate orders, but only for the US cohort above
+    SELECT
+        o.user_id,
+        COUNT(DISTINCT o.order_id)  AS order_count,
+        SUM(o.total_amount)         AS total_spend
+    FROM raw.orders o
+    -- Inline subquery — a third level of nesting the parser must handle
+    INNER JOIN (
+        SELECT user_id FROM us_users
+    ) AS cohort ON cohort.user_id = o.user_id
+    WHERE o.status = 'COMPLETED'
+    GROUP BY o.user_id
 )
 SELECT
-    customer_id,
-    first_name,
-    last_name,
+    u.user_id,
+    u.email,
+    u.country,
+    COALESCE(ot.order_count, 0) AS order_count,
+    COALESCE(ot.total_spend,  0) AS total_spend
+FROM us_users u
+LEFT JOIN order_totals ot
+    ON ot.user_id = u.user_id`,
+    },
+
+    // ── 3 · CTAS with CTE + window function ───────────────────────────────────
+    {
+        name: '[CTAS] Clean Users',
+        sql: `-- CREATE TABLE AS SELECT: materialise a deduplicated, enriched user table.
+-- A ROW_NUMBER window function inside a CTE keeps only the most recent
+-- record when the same email appears more than once in the raw source.
+CREATE TABLE clean.users AS
+WITH enriched AS (
+    SELECT
+        u.user_id,
+        LOWER(TRIM(u.email))         AS email,
+        TRIM(u.name)                 AS name,
+        u.country,
+        r.region_name,
+        u.created_at,
+        ROW_NUMBER() OVER (
+            PARTITION BY LOWER(TRIM(u.email))
+            ORDER BY u.created_at DESC
+        )                            AS rn
+    FROM raw.users u
+    LEFT JOIN raw.regions r
+        ON r.country = u.country
+    WHERE u.email IS NOT NULL
+)
+SELECT
+    user_id,
     email,
+    name,
+    country,
     region_name,
-    country_code,
-    signup_date,
     created_at
 FROM enriched
-WHERE row_num = 1`,
+WHERE rn = 1`,
     },
 
-    // ── 2 · RAW → CLEAN ──────────────────────────────────────────────────────
+    // ── 4 · INSERT INTO with derived-table subquery ───────────────────────────
     {
-        name: '[Clean] Order Items',
-        sql: `-- Join raw line items with the product catalogue to freeze the cost price
--- and category at order time, then pre-compute line_total and gross_margin
--- so every downstream mart can simply aggregate these two columns.
-CREATE TABLE clean.order_items AS
-SELECT
-    oi.item_id,
-    oi.order_id,
-    oi.product_id,
-    p.product_name,
-    p.category,
-    oi.quantity,
-    oi.unit_price,
-    p.cost_price,
-    COALESCE(oi.discount, 0)                                           AS discount,
-    oi.quantity * oi.unit_price * (1 - COALESCE(oi.discount, 0))      AS line_total,
-    oi.quantity * (oi.unit_price - p.cost_price)                       AS gross_margin
-FROM raw.order_items oi
-INNER JOIN raw.products p
-    ON p.product_id = oi.product_id
-WHERE oi.quantity   > 0
-  AND oi.unit_price > 0`,
-    },
-
-    // ── 3 · CLEAN → MART  (INSERT INTO … SELECT) ─────────────────────────────
-    {
-        name: '[Mart] Customer LTV',
-        sql: `-- Populate the customer lifetime-value mart using INSERT INTO … SELECT.
--- A derived table (order_stats) aggregates spend per customer from the
--- clean layers, then joins to clean.customers for enrichment.
-INSERT INTO mart.customer_ltv (
-    customer_id,
-    full_name,
-    country_code,
+        name: '[INSERT] User Summary',
+        sql: `-- INSERT INTO … SELECT: load an aggregated mart table.
+-- The SELECT joins clean.users to an inline derived table (order_stats)
+-- that aggregates raw.orders, demonstrating that INSERT lineage is tracked
+-- through both the explicit column list and the subquery layer.
+INSERT INTO mart.user_summary (
+    user_id,
+    email,
+    region_name,
     total_orders,
-    lifetime_spend,
+    total_spend,
     avg_order_value,
     first_order_date,
     last_order_date
 )
 SELECT
-    c.customer_id,
-    c.first_name || ' ' || c.last_name   AS full_name,
-    c.country_code,
-    order_stats.total_orders,
-    order_stats.lifetime_spend,
-    order_stats.avg_order_value,
-    order_stats.first_order_date,
-    order_stats.last_order_date
-FROM clean.customers c
+    u.user_id,
+    u.email,
+    u.region_name,
+    stats.total_orders,
+    stats.total_spend,
+    stats.avg_order_value,
+    stats.first_order_date,
+    stats.last_order_date
+FROM clean.users u
 INNER JOIN (
     SELECT
-        o.customer_id,
-        COUNT(DISTINCT o.order_id)   AS total_orders,
-        SUM(ci.line_total)           AS lifetime_spend,
-        AVG(ci.line_total)           AS avg_order_value,
-        MIN(o.order_date)            AS first_order_date,
-        MAX(o.order_date)            AS last_order_date
-    FROM raw.orders o
-    INNER JOIN clean.order_items ci
-        ON ci.order_id = o.order_id
-    WHERE o.status = 'COMPLETED'
-    GROUP BY o.customer_id
-) AS order_stats
-    ON order_stats.customer_id = c.customer_id`,
+        user_id,
+        COUNT(DISTINCT order_id)  AS total_orders,
+        SUM(total_amount)         AS total_spend,
+        AVG(total_amount)         AS avg_order_value,
+        MIN(order_date)           AS first_order_date,
+        MAX(order_date)           AS last_order_date
+    FROM raw.orders
+    WHERE status = 'COMPLETED'
+    GROUP BY user_id
+) AS stats
+    ON stats.user_id = u.user_id`,
     },
 
-    // ── 4 · CLEAN → MART  (CREATE TABLE AS SELECT + CTE + window) ────────────
+    // ── 5 · MERGE with subquery USING clause ─────────────────────────────────
     {
-        name: '[Mart] Daily Sales',
-        sql: `-- Build a daily-by-category sales grain and append a cumulative revenue
--- column using a running SUM window function — useful for trend charts.
-CREATE TABLE mart.daily_sales AS
-WITH daily AS (
-    SELECT
-        o.order_date,
-        ci.category,
-        COUNT(DISTINCT o.order_id)     AS total_orders,
-        COUNT(DISTINCT o.customer_id)  AS unique_customers,
-        SUM(ci.line_total)             AS daily_revenue,
-        SUM(ci.gross_margin)           AS daily_margin
-    FROM raw.orders o
-    INNER JOIN clean.order_items ci
-        ON ci.order_id = o.order_id
-    WHERE o.status = 'COMPLETED'
-    GROUP BY
-        o.order_date,
-        ci.category
-)
-SELECT
-    order_date,
-    category,
-    total_orders,
-    unique_customers,
-    daily_revenue,
-    daily_margin,
-    SUM(daily_revenue) OVER (
-        PARTITION BY category
-        ORDER BY order_date
-        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-    )                                  AS cumulative_revenue
-FROM daily`,
-    },
-
-    // ── 5 · MART + CLEAN → MART  (MERGE INTO) ────────────────────────────────
-    {
-        name: '[Mart] Customer Segments',
-        sql: `-- Upsert the customer-segments mart from the LTV mart and clean customers.
--- WHEN MATCHED refreshes the tier and spend for existing rows;
--- WHEN NOT MATCHED inserts brand-new customers discovered since the last run.
-MERGE INTO mart.customer_segments AS target
+        name: '[MERGE] User Segments',
+        sql: `-- MERGE INTO … USING a subquery: upsert a segmentation mart.
+-- WHEN MATCHED refreshes the segment for existing rows;
+-- WHEN NOT MATCHED inserts users discovered since the last run.
+-- The USING subquery itself reads from mart.user_summary, showing that
+-- MERGE lineage correctly chains through the upstream mart layer.
+MERGE INTO mart.user_segments AS target
 USING (
     SELECT
-        ltv.customer_id,
-        c.first_name,
-        c.last_name,
-        c.region_name,
-        c.country_code,
-        ltv.lifetime_spend,
-        ltv.last_order_date,
+        user_id,
+        total_spend,
         CASE
-            WHEN ltv.lifetime_spend >= 10000 THEN 'Platinum'
-            WHEN ltv.lifetime_spend >=  5000 THEN 'Gold'
-            WHEN ltv.lifetime_spend >=  1000 THEN 'Silver'
-            ELSE                                   'Bronze'
-        END AS customer_tier
-    FROM mart.customer_ltv ltv
-    INNER JOIN clean.customers c
-        ON c.customer_id = ltv.customer_id
+            WHEN total_spend >= 10000 THEN 'Platinum'
+            WHEN total_spend >=  5000 THEN 'Gold'
+            WHEN total_spend >=  1000 THEN 'Silver'
+            ELSE                           'Bronze'
+        END AS segment
+    FROM mart.user_summary
 ) AS source
-ON target.customer_id = source.customer_id
+ON target.user_id = source.user_id
 WHEN MATCHED THEN
     UPDATE SET
-        target.customer_tier   = source.customer_tier,
-        target.lifetime_spend  = source.lifetime_spend,
-        target.last_order_date = source.last_order_date,
-        target.region_name     = source.region_name
+        target.segment     = source.segment,
+        target.total_spend = source.total_spend
 WHEN NOT MATCHED THEN
-    INSERT (customer_id, first_name, last_name, region_name, country_code, customer_tier, lifetime_spend, last_order_date)
-    VALUES (source.customer_id, source.first_name, source.last_name, source.region_name, source.country_code, source.customer_tier, source.lifetime_spend, source.last_order_date)`,
+    INSERT (user_id, segment, total_spend)
+    VALUES (source.user_id, source.segment, source.total_spend)`,
+    },
+
+    // ── 6 · Complex: three chained CTEs + window functions ────────────────────
+    {
+        name: '[Complex] Product Performance',
+        sql: `-- The full-complexity showcase: three CTEs where each one builds on the last.
+-- line_revenue  →  monthly_product  →  product_running  →  final SELECT
+--
+-- Features exercised in a single query:
+--   • Three CTEs with inter-CTE references (CTE fan-out / fan-in)
+--   • Multi-table JOIN inside the first CTE (raw.order_lines + raw.products)
+--   • A second JOIN that bridges a CTE to a raw table (raw.orders)
+--   • Two window functions: SUM() running total + RANK() within partition
+--   • Column expressions (computed revenue, margin) tracked end-to-end
+CREATE TABLE mart.product_perf AS
+WITH
+-- Step 1: Compute revenue and margin at the order-line level
+line_revenue AS (
+    SELECT
+        ol.order_id,
+        ol.product_id,
+        p.name                                                      AS product_name,
+        p.category,
+        ol.qty,
+        ol.unit_price,
+        p.cost,
+        ol.qty * ol.unit_price * (1 - COALESCE(ol.discount, 0))    AS revenue,
+        ol.qty * (ol.unit_price - p.cost)                          AS gross_margin
+    FROM raw.order_lines ol
+    INNER JOIN raw.products p
+        ON p.product_id = ol.product_id
+),
+-- Step 2: Roll up to product × month, joining to raw.orders for the date
+monthly_product AS (
+    SELECT
+        lr.product_id,
+        lr.product_name,
+        lr.category,
+        DATE_TRUNC('month', o.order_date)   AS month,
+        COUNT(DISTINCT o.order_id)          AS orders,
+        SUM(lr.revenue)                     AS monthly_revenue,
+        SUM(lr.gross_margin)                AS monthly_margin
+    FROM line_revenue lr
+    INNER JOIN raw.orders o
+        ON o.order_id = lr.order_id
+    WHERE o.status = 'COMPLETED'
+    GROUP BY
+        lr.product_id,
+        lr.product_name,
+        lr.category,
+        DATE_TRUNC('month', o.order_date)
+),
+-- Step 3: Add running totals and within-category rank using window functions
+product_running AS (
+    SELECT
+        product_id,
+        product_name,
+        category,
+        month,
+        orders,
+        monthly_revenue,
+        monthly_margin,
+        SUM(monthly_revenue) OVER (
+            PARTITION BY product_id
+            ORDER BY month
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        )                                   AS cumulative_revenue,
+        RANK() OVER (
+            PARTITION BY category
+            ORDER BY monthly_revenue DESC
+        )                                   AS rank_in_category
+    FROM monthly_product
+)
+SELECT
+    product_id,
+    product_name,
+    category,
+    month,
+    orders,
+    monthly_revenue,
+    monthly_margin,
+    cumulative_revenue,
+    rank_in_category
+FROM product_running
+WHERE rank_in_category <= 10`,
     },
 ];
 
